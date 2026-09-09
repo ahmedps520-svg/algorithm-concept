@@ -465,7 +465,11 @@ function recordWindows(room, ts) {
   if (!rec) return;
   if (ts >= rec.until) {
     const done = rec; rec = null; renderTrainCounts();
-    if (!done.n) { $('#rec-status').textContent = 'nothing stored: no person was tracked during the recording'; $('#train-result').innerHTML = '<b style="color:var(--new)">Recording stored 0 windows.</b> Make sure a green box with an id is on the person the whole time, then record again.'; return; }
+    if (!done.n) {
+      const tr = [...room.tracks.values()], longest = tr.length ? Math.max(...tr.map(t => t.obs.length)) : 0, oldest = tr.length ? Math.max(...tr.map(t => ts - (t.firstSeen ?? ts))) : 0;
+      $('#rec-status').textContent = 'nothing stored';
+      $('#train-result').innerHTML = `<b style="color:var(--new)">Recording stored 0 windows.</b> Diagnostics: ${tr.length} track(s), longest ${longest} frames over ${oldest.toFixed(1)} s, ${room.fpsWin.length > 1 ? ((room.fpsWin.length - 1) / (ts - room.fpsWin[0])).toFixed(1) : '?'} fps. ` + (tr.length === 0 ? 'No person was detected.' : longest < LEARN.minObs ? 'The person id kept changing, so no track lasted long enough.' : 'Detection was too slow.');
+      return; }
     $('#rec-status').textContent = `stored ${done.n} windows of "${nice(done.label)}"`;
     autoTrain();
     return;
@@ -565,8 +569,11 @@ function drawOverlays(room, dets, kps) {
     const x1 = bx[0] * W, y1 = bx[1] * H, bw = (bx[2] - bx[0]) * W, bh = (bx[3] - bx[1]) * H;
     if (kps && kps.get(d.id)) drawSkeleton(c, kps.get(d.id), W, H);
     c.strokeStyle = alerting ? '#ef4444' : '#22c55e'; c.lineWidth = alerting ? 3 : 1.5; c.strokeRect(x1, y1, bw, bh);
-    c.fillStyle = c.strokeStyle; c.fillRect(x1, y1 - 13, 34, 13); c.fillStyle = '#000'; c.font = 'bold 10px system-ui'; c.fillText('id ' + d.id, x1 + 3, y1 - 3);
-    const st = room.tracks.get(d.id); if (!st) continue;
+    const st = room.tracks.get(d.id);
+    const idTxt = 'id ' + d.id + (st && st.firstSeen != null ? ` · ${(ts - st.firstSeen).toFixed(0)}s` : '');
+    c.font = 'bold 10px system-ui'; const iw = c.measureText(idTxt).width + 6;
+    c.fillStyle = c.strokeStyle; c.fillRect(x1, y1 - 13, iw, 13); c.fillStyle = '#000'; c.fillText(idTxt, x1 + 3, y1 - 3);
+    if (!st) continue;
     // cue line: what the classifier sees right now
     const q = st.cues, parts = [`move ${(q.motion || 0).toFixed(2)}`];
     if (d.headDrop != null) parts.push(`head ${q.headDown ? 'DOWN' : 'up'}`);
@@ -700,33 +707,51 @@ async function addCamera(deviceId) {
   const c = room.canvas.getContext('2d', { willReadFrequently: true });
   const W = room.canvas.width, H = room.canvas.height, TARGET_MS = 100;   // ~10 fps: plenty for these behaviors, and leaves the UI responsive
   facePromise ||= loadFace().catch(e => { console.warn('face landmarker unavailable', e); faceState = 'failed'; $('#facestatus').textContent = '· lips: unavailable (head turns only)'; return null; });
-  const smooth = new Map();   // per track id: EMA of torso centre and box so keypoint flicker doesn't read as motion
+  const smooth = new Map();   // per stable id: EMA of torso centre and box so keypoint flicker doesn't read as motion
+  // Stable ids. The detector's own ids can change between frames; we keep our own by box
+  // overlap with the previous frame, so a person stays "id 3" for as long as they are in view.
+  const stable = { byDet: new Map(), tracks: new Map(), next: 1 };
+  const iou = (a, b) => { const ix = Math.max(0, Math.min(a[2], b[2]) - Math.max(a[0], b[0])), iy = Math.max(0, Math.min(a[3], b[3]) - Math.max(a[1], b[1])), inter = ix * iy;
+    return inter / ((a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter || 1); };
+  function stableId(detId, box, ts, claimed) {
+    let id = stable.byDet.get(detId);
+    if (id != null && stable.tracks.has(id) && !claimed.has(id)) { const t = stable.tracks.get(id); t.box = box; t.ts = ts; claimed.add(id); return id; }
+    let best = null, bestIou = 0.25;
+    for (const [sid, t] of stable.tracks) { if (claimed.has(sid)) continue; const v = iou(box, t.box); if (v > bestIou) { bestIou = v; best = sid; } }
+    if (best == null) { best = stable.next++; stable.tracks.set(best, { box, ts, born: ts }); } else { const t = stable.tracks.get(best); t.box = box; t.ts = ts; }
+    stable.byDet.set(detId, best); claimed.add(best); return best;
+  }
+  function pruneStable(ts) {
+    for (const [sid, t] of stable.tracks) if (ts - t.ts > 2) { stable.tracks.delete(sid); for (const [d, s2] of stable.byDet) if (s2 === sid) stable.byDet.delete(d); }
+  }
   (async function loop() {
     while (room.active) {
       const t0 = performance.now();
       if (video.readyState < 2 || document.hidden) { await sleep(100); continue; }
       c.drawImage(video, 0, 0, W, H);                    // detect on the downscaled frame, not the 720p/1080p source
       let poses = [], faces = null;
-      try { poses = await own.estimatePoses(room.canvas, { maxPoses: 6, flipHorizontal: false }); }
+      try { poses = await own.estimatePoses(room.canvas, { maxPoses: 6, flipHorizontal: false }, performance.now() * 1000); }   // timestamp in µs: without it the built-in tracker drops every track each frame
       catch (e) { console.warn('estimatePoses failed', e); room.statusEl.textContent = 'detector error: ' + (e.message || e); await sleep(500); continue; }
       if (faceState === 'on') { try { faces = (await facePromise).detectForVideo(room.canvas, performance.now()); } catch (e) { console.warn('face detect failed', e); } }
-      const ts = now(), dets = [], kps = new Map(), seen = new Set();
+      const ts = now(), dets = [], kps = new Map(), seen = new Set(), claimed = new Set();
+      pruneStable(ts);
       for (const p of poses) {
-        if ((p.score ?? 1) < 0.2 || p.id == null) continue;
+        if ((p.score ?? 1) < 0.2) continue;
         const kp = p.keypoints.map(k => [k.x / W, k.y / H, k.score ?? 0]);
         const nose = kp[0], le = kp[3], re = kp[4], ls = kp[5], rs = kp[6], lw = kp[9], rw = kp[10], lh = kp[11], rh = kp[12];
         if (ls[2] < 0.3 || rs[2] < 0.3) continue;                       // shoulders are the anchor for everything below
         const good = kp.filter(k => k[2] >= 0.3);
         let x1 = Math.min(...good.map(k => k[0])), x2 = Math.max(...good.map(k => k[0])), y1 = Math.min(...good.map(k => k[1])), y2 = Math.max(...good.map(k => k[1]));
         const pw = (x2 - x1) * 0.15, ph = (y2 - y1) * 0.12; x1 -= pw; x2 += pw; y1 -= ph; y2 += ph * 0.5;   // keypoints sit inside the body; pad to a box
+        const sid = stableId(p.id ?? ('n' + dets.length), [x1, y1, x2, y2], ts, claimed);
         const shX = (ls[0] + rs[0]) / 2, shY = (ls[1] + rs[1]) / 2, shoulderW = Math.max(Math.abs(rs[0] - ls[0]), 0.02);
         const hips = lh[2] >= 0.3 && rh[2] >= 0.3, hipY = hips ? (lh[1] + rh[1]) / 2 : shY + shoulderW * 1.2;
         const torso = Math.max(Math.abs(hipY - shY), 0.02);
         // Stable centre: torso midpoint, EMA-smoothed. Box size EMA-smoothed too.
-        let sm = smooth.get(p.id); const rawCx = hips ? (shX + (lh[0] + rh[0]) / 2) / 2 : shX, rawCy = (shY + hipY) / 2;
-        if (!sm) { sm = { cx: rawCx, cy: rawCy, w: x2 - x1, h: y2 - y1 }; smooth.set(p.id, sm); }
+        let sm = smooth.get(sid); const rawCx = hips ? (shX + (lh[0] + rh[0]) / 2) / 2 : shX, rawCy = (shY + hipY) / 2;
+        if (!sm) { sm = { cx: rawCx, cy: rawCy, w: x2 - x1, h: y2 - y1 }; smooth.set(sid, sm); }
         else { const a = 0.5; sm.cx += (rawCx - sm.cx) * a; sm.cy += (rawCy - sm.cy) * a; sm.w += ((x2 - x1) - sm.w) * 0.3; sm.h += ((y2 - y1) - sm.h) * 0.3; }
-        seen.add(p.id);
+        seen.add(sid);
         let headDrop = null, headHeight = null, headTilt = null, headYaw = null, armsUp = false, nosePt = null;
         if (nose[2] >= 0.3) {
           nosePt = [nose[0], nose[1]];
@@ -746,8 +771,8 @@ async function addCamera(deviceId) {
           faces.faceLandmarks.forEach((lm, i) => { const d = Math.hypot(lm[1].x - nosePt[0], lm[1].y - nosePt[1]); if (d < bestD) { bestD = d; best = i; } });
           if (best >= 0) mouth = mouthOpenness(faces, best);
         }
-        dets.push({ id: p.id, cx: sm.cx, cy: sm.cy, w: Math.max(sm.w, 0.02), h: Math.max(sm.h, 0.02), box: [x1, y1, x2, y2], fx: sm.cx, fy: Math.min(1, y2), headDrop, headHeight, headTilt, headYaw, nose: nosePt, shoulderW, armsUp, mouth });
-        kps.set(p.id, kp);
+        dets.push({ id: sid, cx: sm.cx, cy: sm.cy, w: Math.max(sm.w, 0.02), h: Math.max(sm.h, 0.02), box: [x1, y1, x2, y2], fx: sm.cx, fy: Math.min(1, y2), headDrop, headHeight, headTilt, headYaw, nose: nosePt, shoulderW, armsUp, mouth });
+        kps.set(sid, kp);
       }
       for (const id of [...smooth.keys()]) if (!seen.has(id)) smooth.delete(id);
       // draw the box where the person is (centre may be the torso midpoint; box is the body)
