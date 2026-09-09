@@ -2,37 +2,39 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Classroom Monitor – Staff Dashboard (Demo)</title>
+<title>Classroom Monitor – Staff Dashboard</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
   :root { --bg:#0f1115; --panel:#181b22; --line:#2a2f3a; --fg:#e6e8ee; --muted:#8b93a7;
           --new:#e5484d; --ack:#f5a524; --ok:#30a46c; --low:#6b7280; --accent:#2f5fd8; }
   * { box-sizing:border-box; }
-  html, body { height:100%; }
   body { margin:0; font:14px/1.45 system-ui, -apple-system, Segoe UI, sans-serif; background:var(--bg); color:var(--fg); }
-  header { display:flex; align-items:center; gap:14px; padding:10px 16px; border-bottom:1px solid var(--line); background:var(--panel); flex-wrap:wrap; }
+  header { display:flex; align-items:center; gap:12px; padding:10px 16px; border-bottom:1px solid var(--line); background:var(--panel); flex-wrap:wrap; }
   header h1 { font-size:16px; margin:0; }
   header .spacer { flex:1; }
-  header input, header select { background:#0f1115; color:var(--fg); border:1px solid var(--line); padding:6px 8px; border-radius:6px; }
-  header input { width:170px; }
-  .clock { font-variant-numeric:tabular-nums; color:var(--muted); }
+  input, select { background:#0f1115; color:var(--fg); border:1px solid var(--line); padding:6px 8px; border-radius:6px; font:inherit; }
   main { display:grid; grid-template-columns: minmax(0,1fr) 400px; gap:12px; padding:12px; min-height:calc(100vh - 54px); }
   @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
   section { background:var(--panel); border:1px solid var(--line); border-radius:8px; overflow:auto; }
-  section h2 { font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); margin:0; padding:10px 12px; border-bottom:1px solid var(--line); position:sticky; top:0; background:var(--panel); z-index:1; display:flex; align-items:center; gap:8px; }
+  section h2 { font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); margin:0; padding:10px 12px; border-bottom:1px solid var(--line); position:sticky; top:0; background:var(--panel); z-index:1; display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  section h2 .spacer { flex:1; }
   .left { display:flex; flex-direction:column; gap:12px; min-width:0; }
-  .grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap:10px; padding:10px; }
+  .grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap:10px; padding:10px; }
   .room { position:relative; background:#000; border-radius:6px; overflow:hidden; border:2px solid transparent; }
   .room.alerting { border-color:var(--new); box-shadow:0 0 0 2px rgba(229,72,77,.25); }
-  .room canvas { width:100%; display:block; aspect-ratio:16/9; }
-  .room .label { position:absolute; left:0; right:0; bottom:0; padding:4px 8px; background:rgba(0,0,0,.6); font-size:12px; display:flex; justify-content:space-between; }
+  .room canvas { width:100%; display:block; aspect-ratio:16/9; touch-action:none; }
+  .room canvas.drawing { cursor:crosshair; }
+  .room .label { position:absolute; left:0; right:0; bottom:0; padding:4px 8px; background:rgba(0,0,0,.6); font-size:12px; display:flex; justify-content:space-between; gap:8px; }
   .room .rec { position:absolute; top:6px; left:8px; font-size:11px; color:#fff; background:rgba(229,72,77,.85); padding:1px 6px; border-radius:4px; display:none; }
   .room.recording .rec { display:block; }
+  .room .tools { position:absolute; top:6px; right:6px; display:flex; gap:4px; }
+  .room .overlay { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; background:rgba(15,17,21,.85); text-align:center; padding:20px; }
+  .room .overlay p { margin:0; color:var(--muted); font-size:13px; max-width:360px; }
   .badge { display:inline-block; padding:1px 7px; border-radius:10px; font-size:11px; font-weight:600; white-space:nowrap; }
   .b-new { background:var(--new); } .b-acknowledged { background:var(--ack); color:#000; }
   .b-confirmed { background:var(--ok); } .b-dismissed { background:var(--low); }
   .b-high { background:#7f1d1d; } .b-medium { background:#78350f; } .b-low { background:#374151; }
-  .b-demo { background:#3b2f7a; }
+  .b-local { background:#1f4d3a; }
   .alert { padding:10px 12px; border-bottom:1px solid var(--line); animation: pop .25s ease-out; }
   @keyframes pop { from { background:#3a1e20; } to { background:transparent; } }
   .alert .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
@@ -42,13 +44,12 @@
   button:hover { background:#2e3446; } button.primary { background:var(--accent); border-color:var(--accent); }
   button.danger { background:#6b2124; border-color:#6b2124; } button.ok { background:#1f5f3d; border-color:#1f5f3d; }
   button:disabled { opacity:.5; cursor:not-allowed; }
-  button.small { padding:2px 8px; font-size:12px; }
+  button.small { padding:2px 8px; font-size:11px; } button.on { background:var(--accent); border-color:var(--accent); }
   textarea { width:100%; background:#0f1115; color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:6px; font:inherit; margin-top:6px; }
   table { width:100%; border-collapse:collapse; font-size:13px; }
   th, td { text-align:left; padding:6px 10px; border-bottom:1px solid var(--line); white-space:nowrap; }
   tr.clickable:hover { background:#1f2430; cursor:pointer; }
   .filters { display:flex; gap:8px; padding:8px 12px; flex-wrap:wrap; }
-  .filters select { background:#0f1115; color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:5px; }
   dialog { background:var(--panel); color:var(--fg); border:1px solid var(--line); border-radius:10px; width:min(820px, 95vw); padding:16px; }
   dialog::backdrop { background:rgba(0,0,0,.6); }
   dialog img { width:100%; background:#000; border-radius:6px; aspect-ratio:16/9; }
@@ -57,35 +58,30 @@
   .empty { padding:24px; text-align:center; color:var(--muted); }
   .note { font-size:12px; color:var(--muted); padding:8px 12px; border-bottom:1px solid var(--line); }
   .note b { color:var(--ack); }
-  .timeline { padding:10px 12px; }
-  .tl-track { position:relative; height:26px; background:#0f1115; border-radius:6px; margin:6px 0 2px; overflow:hidden; }
-  .tl-ev { position:absolute; top:4px; height:18px; border-radius:4px; font-size:10px; line-height:18px; padding:0 5px; color:#fff; overflow:hidden; white-space:nowrap; }
-  .tl-cursor { position:absolute; top:0; bottom:0; width:2px; background:#fff; }
-  .tl-name { font-size:11px; color:var(--muted); }
   .kv { display:grid; grid-template-columns:auto 1fr; gap:2px 12px; font-size:12px; margin-top:8px; color:var(--muted); }
   .kv b { color:var(--fg); font-weight:500; }
   details { padding:8px 12px; font-size:13px; color:var(--muted); }
   details summary { cursor:pointer; color:var(--fg); }
-  details ol { padding-left:18px; margin:6px 0; }
-  code { background:#0f1115; padding:1px 5px; border-radius:4px; font-size:12px; }
+  details ol, details ul { padding-left:18px; margin:6px 0; }
+  .live-status { font-size:11px; color:var(--muted); }
 </style>
 </head>
 <body>
 <header>
   <h1>Classroom Monitor</h1>
-  <span class="badge b-demo">DEMO · simulated feeds</span>
-  <span class="clock" id="clock">t = 0.0s</span>
-  <select id="speed" title="Simulation speed"><option value="1">1× speed</option><option value="2">2×</option><option value="4" selected>4×</option><option value="8">8×</option></select>
-  <button id="restart" class="small">↻ Restart scenario</button>
+  <span class="badge b-local" title="Video never leaves this device. Detection runs in your browser; clips are kept in page memory only.">LOCAL · nothing uploaded</span>
+  <select id="devices" title="Camera to add"><option value="">default camera</option></select>
+  <button id="addcam" class="primary">＋ Add camera</button>
+  <button id="addsim" title="Adds a scripted synthetic room so you can see all alert types without acting them out">＋ Simulated room</button>
   <span class="spacer"></span>
-  <label>Staff ID <input id="staff" placeholder="e.g. j.smith" title="Required to acknowledge or review alerts"></label>
+  <label>Staff ID <input id="staff" placeholder="e.g. j.smith" style="width:150px" title="Required to acknowledge or review alerts"></label>
 </header>
 <main>
   <div class="left">
     <section>
-      <h2>Live rooms <span class="badge b-low" id="roomcount"></span></h2>
+      <h2>Live rooms <span class="badge b-low" id="roomcount">0 cameras</span><span class="spacer"></span><span class="live-status" id="modelstatus"></span></h2>
       <div id="grid" class="grid"></div>
-      <div class="timeline" id="timeline"></div>
+      <div class="note" id="hint">Click <b>＋ Add camera</b> and allow camera access. Sit in view, then draw a seat zone around yourself with <b>Draw zone</b>. Then try: head down and still for 12 s (sleeping), walk out of the zone for 8 s (out of seat), or two people shoving with arms up for 3 s (fighting). Brief movement never alerts.</div>
     </section>
     <section>
       <h2>Incident log</h2>
@@ -99,16 +95,20 @@
     </section>
     <section>
       <details>
-        <summary>How this demo works</summary>
+        <summary>How this works</summary>
         <ol>
-          <li>Each room is a simulated 720p camera feed rendered in the browser. Boxes and track ids are what the detector + tracker (YOLOv8-pose + ByteTrack in the real backend) would output.</li>
-          <li>Every track feeds per-frame cues (motion, proximity, relative velocity, arm raise, head-below-shoulders, foot outside seat zone) into a <b>sustained-condition gate</b>: a behavior fires only after it has held for several seconds at a high fraction of frames. A single frame can never alert.</li>
-          <li>The alert engine merges repeats into the open alert and applies per-track (120 s) and per-room (30 s) cooldowns.</li>
-          <li>On alert, a clip is saved from a 10 s pre-roll ring buffer plus 10 s post-roll. Nothing is recorded continuously.</li>
-          <li>A staff member must <b>acknowledge</b> then <b>confirm or dismiss</b>. Only a human confirm marks a clip actionable. The system never takes any action itself.</li>
-          <li>Retention is driven by the human outcome: unreviewed clips are deleted after 48 h, dismissed after 24 h, confirmed kept 90 days.</li>
+          <li>Each camera is a room. Frames go to <b>MoveNet MultiPose</b> (TensorFlow.js) running in your browser: up to 6 people, 17 keypoints each, with a built-in box tracker giving stable ids. In the Python backend this stage is YOLOv8-pose + ByteTrack on an RTSP feed; the classifiers downstream are the same.</li>
+          <li>Per track, each frame yields cues: motion (box-widths/s), a nearby moving partner, relative velocity, sustained arm raise, nose below the shoulder line, foot point outside every seat zone.</li>
+          <li>Each behavior sits behind a <b>sustained-condition gate</b>: fighting 3 s at ≥60 % of frames, sleeping 12 s at ≥85 %, out of seat 8 s at ≥80 %. A single frame can never alert.</li>
+          <li>Repeats merge into the open alert; per-track (120 s) and per-room (30 s) cooldowns stop duplicates.</li>
+          <li>On alert a clip is kept from a 10 s pre-roll ring buffer plus 10 s post-roll. Nothing is recorded continuously.</li>
+          <li>A staff member must <b>acknowledge</b> then <b>confirm or dismiss</b>. Only a human confirm marks a clip actionable; the system takes no action itself. Retention: unreviewed 48 h, dismissed 24 h, confirmed 90 d.</li>
         </ol>
-        <div>Same UI, thresholds and workflow as the Python backend in this repository; the video and detections here are synthetic. Talking detection is off: from video alone at this distance it is low confidence and needs an audio channel.</div>
+        <ul>
+          <li>Video never leaves the device. There is no server; clips live in page memory and vanish on reload.</li>
+          <li>Talking is not detected: from video alone at classroom distance it is low confidence and needs an audio channel.</li>
+          <li>Seat zones are saved per camera in this browser.</li>
+        </ul>
       </details>
     </section>
   </div>
@@ -131,29 +131,34 @@
   <div class="kv" id="clipmeta"></div>
 </dialog>
 
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core@4.22.0/dist/tf-core.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-converter@4.22.0/dist/tf-converter.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl@4.22.0/dist/tf-backend-webgl.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection@2.1.3/dist/pose-detection.min.js"></script>
 <script>
 // =====================================================================================
-// Config (mirrors config/system.yaml)
+// Config (mirrors config/system.yaml; sleeping shortened from 20 s to 12 s for the demo)
 // =====================================================================================
-const FPS = 10;
 const TH = {
   fighting: { window: 4, minDur: 3, minFrac: 0.6, motionSpike: 0.6, proximity: 0.6, relative: 0.5, partnerMotion: 0.3, armFrames: 6, frameScore: 0.6, floor: 0.5 },
-  sleeping: { window: 25, minDur: 12, minFrac: 0.85, headDrop: 0.15, maxMotion: 0.3 },   // 20 s in prod; 12 s here so the demo moves
+  sleeping: { window: 25, minDur: 12, minFrac: 0.85, headDrop: 0.15, maxMotion: 0.3 },
   out_of_seat: { window: 10, minDur: 8, minFrac: 0.8, margin: 0.03 },
 };
 const DEBOUNCE = { perTrack: 120, perRoom: 30 };
-const CLIP = { pre: 10, post: 10 };
+const CLIP = { pre: 10, post: 10, fps: 10, w: 320, h: 180 };
 const RETENTION = { unreviewed_h: 48, dismissed_h: 24, actionable_d: 90 };
+const TRACK_TTL = 5, MIN_TRACK_AGE = 3;
 const $ = s => document.querySelector(s);
 const staff = () => $('#staff').value.trim();
-try { $('#staff').value = localStorage.getItem('staff') || ''; } catch {}
-$('#staff').addEventListener('input', e => { try { localStorage.setItem('staff', e.target.value); } catch {} });
+const ls = { get: k => { try { return localStorage.getItem(k); } catch { return null; } }, set: (k, v) => { try { localStorage.setItem(k, v); } catch {} } };
+$('#staff').value = ls.get('staff') || '';
+$('#staff').addEventListener('input', e => ls.set('staff', e.target.value));
 const nice = b => b.replace('_', ' ');
 const badge = (cls, txt) => `<span class="badge b-${cls}">${txt}</span>`;
-const fmtT = t => `${Math.floor(t / 60)}:${(t % 60).toFixed(1).padStart(4, '0')}`;
+const T0 = performance.now(), BASE_WALL = Date.now();
+const now = () => (performance.now() - T0) / 1000;
 const wall = t => new Date(BASE_WALL + t * 1000).toLocaleTimeString();
-const BASE_WALL = Date.now();
-const gauss = (() => { let s; return sd => { let u = 0, v = 0; while (!u) u = Math.random(); while (!v) v = Math.random(); return sd * Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); }; })();
+const gauss = sd => { let u = 0, v = 0; while (!u) u = Math.random(); while (!v) v = Math.random(); return sd * Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); };
 
 // =====================================================================================
 // Sustained-condition gate (port of behavior/sustain.py)
@@ -174,63 +179,46 @@ class Sustain {
 }
 
 // =====================================================================================
-// Synthetic actors (port of ingestion/source.py Actor)
-// =====================================================================================
-class Actor {
-  constructor(id, x, y) { Object.assign(this, { id, x, y, w: 0.11, h: 0.36, headDrop: 0, armsUp: false, jitter: 0.002, speed: 0.3, target: null, rx: x, ry: y }); }
-  moveTo(x, y) { this.target = [x, y]; }
-  step(dt) {
-    if (this.target) {
-      const [tx, ty] = this.target, dx = tx - this.x, dy = ty - this.y, dist = Math.hypot(dx, dy), m = this.speed * dt;
-      if (dist <= m) { this.x = tx; this.y = ty; this.target = null; } else { this.x += dx / dist * m; this.y += dy / dist * m; }
-    }
-    this.rx = Math.min(0.98, Math.max(0.02, this.x + gauss(this.jitter)));
-    this.ry = Math.min(0.98, Math.max(0.02, this.y + gauss(this.jitter)));
-  }
-  box() { return [this.rx - this.w / 2, this.ry - this.h / 2, this.rx + this.w / 2, this.ry + this.h / 2]; }
-}
-
-// =====================================================================================
-// Behavior engine (port of behavior/classifiers.py, simplified)
+// Per-track state + classifiers (port of behavior/classifiers.py)
+// Input per frame: { id, cx, cy, w, h, headDrop, armsUp } all normalised to the frame.
 // =====================================================================================
 class TrackState {
-  constructor(id, zones) {
-    this.id = id; this.obs = []; this.age = 0; this.homeZone = null; this.zones = zones;
+  constructor(id, room) {
+    this.id = id; this.room = room; this.obs = []; this.age = 0; this.homeZone = null; this.lastSeen = 0;
     this.gates = { fighting: new Sustain(TH.fighting.window, TH.fighting.minDur, TH.fighting.minFrac),
                    sleeping: new Sustain(TH.sleeping.window, TH.sleeping.minDur, TH.sleeping.minFrac),
                    out_of_seat: new Sustain(TH.out_of_seat.window, TH.out_of_seat.minDur, TH.out_of_seat.minFrac) };
     this.armFrames = 0; this.scores = []; this.partner = null;
   }
-  observe(a, ts) {
+  observe(d, ts) {
     const prev = this.obs[this.obs.length - 1];
-    const o = { ts, cx: a.rx, cy: a.ry, w: a.w, h: a.h, fx: a.rx, fy: a.ry + a.h / 2, vx: 0, vy: 0, motion: 0,
-                headDrop: a.headDrop * 0.51, armsUp: a.armsUp };
-    if (prev) { const dt = ts - prev.ts; if (dt > 0) { o.vx = (o.cx - prev.cx) / dt; o.vy = (o.cy - prev.cy) / dt; o.motion = Math.hypot(o.cx - prev.cx, o.cy - prev.cy) / o.w / dt; } }
+    const o = { ts, cx: d.cx, cy: d.cy, w: d.w, h: d.h, fx: d.cx, fy: d.cy + d.h / 2, vx: 0, vy: 0, motion: 0, headDrop: d.headDrop, armsUp: d.armsUp };
+    if (prev) { const dt = ts - prev.ts; if (dt > 1e-3) { o.vx = (o.cx - prev.cx) / dt; o.vy = (o.cy - prev.cy) / dt; o.motion = Math.hypot(o.cx - prev.cx, o.cy - prev.cy) / Math.max(o.w, 1e-3) / dt; } }
     this.obs.push(o); while (this.obs.length && ts - this.obs[0].ts > 25) this.obs.shift();
-    this.age++;
+    this.age++; this.lastSeen = ts;
     return o;
   }
-  zoneAt(x, y) { const m = TH.out_of_seat.margin; return this.zones.find(z => x >= z.x1 - m && x <= z.x2 + m && y >= z.y1 - m && y <= z.y2 + m) || null; }
+  get latest() { return this.obs[this.obs.length - 1]; }
+  zoneAt(x, y) { const m = TH.out_of_seat.margin; return this.room.zones.find(z => x >= z.x1 - m && x <= z.x2 + m && y >= z.y1 - m && y <= z.y2 + m) || null; }
   evaluate(others, ts) {
-    const cur = this.obs[this.obs.length - 1], events = [];
-    if (this.age < 3) return events;
-    // nearest neighbour gap in box widths (for evidence) + engagement partner = moving-most person within reach
+    const cur = this.latest, events = [];
+    if (this.age < MIN_TRACK_AGE) return events;
     let gap = Infinity; const cands = [];
-    for (const o of others) { const p = o.obs[o.obs.length - 1]; if (!p) continue;
+    for (const o of others) { const p = o.latest; if (!p) continue;
       const dx = Math.max(0, Math.abs(cur.cx - p.cx) - (cur.w + p.w) / 2), dy = Math.max(0, Math.abs(cur.cy - p.cy) - (cur.h + p.h) / 2);
-      const g = Math.hypot(dx, dy) / Math.min(cur.w, p.w); if (g < gap) gap = g; if (g <= TH.fighting.proximity) cands.push(o); }
-    const partner = cands.length ? cands.reduce((b, o) => o.obs[o.obs.length - 1].motion > b.obs[b.obs.length - 1].motion ? o : b) : null;
+      const g = Math.hypot(dx, dy) / Math.max(Math.min(cur.w, p.w), 1e-3); if (g < gap) gap = g; if (g <= TH.fighting.proximity) cands.push(o); }
+    // Engagement partner = the moving-most person within reach (a still bystander is never the partner).
+    const partner = cands.length ? cands.reduce((b, o) => o.latest.motion > b.latest.motion ? o : b) : null;
     // --- fighting
-    const near = !!partner;
-    const motion = cur.motion >= TH.fighting.motionSpike;
+    const near = !!partner, motion = cur.motion >= TH.fighting.motionSpike;
     let relative = false;
-    if (near) { const p = partner.obs[partner.obs.length - 1];
-      // velocity *difference* (walking together cancels) AND the partner must be moving too (walking past a seated student is not a fight)
-      relative = Math.hypot(cur.vx - p.vx, cur.vy - p.vy) / cur.w >= TH.fighting.relative && p.motion >= TH.fighting.partnerMotion; }
+    if (near) { const p = partner.latest;
+      // velocity *difference* (moving together cancels) AND the partner must be moving (walking past a seated person is not a fight)
+      relative = Math.hypot(cur.vx - p.vx, cur.vy - p.vy) / Math.max(cur.w, 1e-3) >= TH.fighting.relative && p.motion >= TH.fighting.partnerMotion; }
     this.armFrames = cur.armsUp ? this.armFrames + 1 : 0;
     const arms = this.armFrames >= TH.fighting.armFrames;
     const score = 0.3 * motion + 0.2 * near + 0.3 * relative + 0.2 * arms;
-    this.scores.push(score); if (this.scores.length > TH.fighting.window * FPS) this.scores.shift();
+    this.scores.push(score); if (this.scores.length > 60) this.scores.shift();
     const active = score >= TH.fighting.frameScore;
     if (active && partner) this.partner = partner.id;
     let r = this.gates.fighting.update(ts, active);
@@ -238,14 +226,14 @@ class TrackState {
       const mean = this.scores.reduce((a, b) => a + b, 0) / this.scores.length;
       const conf = Math.max(TH.fighting.floor, Math.min(1, 0.5 * mean + 0.5 * r.frac + Math.min(0.2, 0.05 * (r.sustained - TH.fighting.minDur))));
       events.push({ behavior: 'fighting', tracks: [this.id, this.partner].filter(x => x != null), score: conf, sustained: r.sustained,
-                    evidence: { active_fraction: r.frac.toFixed(2), motion: cur.motion.toFixed(2), gap_box_widths: gap.toFixed(2), arm_raise_frames: this.armFrames } });
+                    evidence: { active_fraction: r.frac.toFixed(2), motion: cur.motion.toFixed(2), gap_box_widths: isFinite(gap) ? gap.toFixed(2) : '—', arm_raise_frames: this.armFrames } });
     }
-    // --- sleeping
+    // --- sleeping (no pose this frame counts as inactive, never as evidence)
     const recent = this.obs.filter(o => o.ts >= ts - 1), meanMotion = recent.reduce((a, o) => a + o.motion, 0) / recent.length;
-    r = this.gates.sleeping.update(ts, cur.headDrop >= TH.sleeping.headDrop && meanMotion <= TH.sleeping.maxMotion);
+    r = this.gates.sleeping.update(ts, cur.headDrop != null && cur.headDrop >= TH.sleeping.headDrop && meanMotion <= TH.sleeping.maxMotion);
     if (r.trig) events.push({ behavior: 'sleeping', tracks: [this.id], score: Math.min(1, 0.4 + 0.3 * r.frac + 0.3 * Math.min(1, cur.headDrop / 0.45)), sustained: r.sustained,
                               evidence: { head_drop: cur.headDrop.toFixed(2), motion: meanMotion.toFixed(3), active_fraction: r.frac.toFixed(2) } });
-    // --- out of seat
+    // --- out of seat (only for people first seen inside a zone)
     const z = this.zoneAt(cur.fx, cur.fy);
     if (z && !this.homeZone) this.homeZone = z.id;
     if (this.homeZone) {
@@ -258,44 +246,11 @@ class TrackState {
 }
 
 // =====================================================================================
-// Rooms + scenarios
-// =====================================================================================
-const SCENARIO_LEN = 110;
-function once(room, tag, t, when, fn) { if (!room.fired.has(tag) && t >= when) { room.fired.add(tag); fn(); } }
-
-const ROOMS = [
-  { id: 'room_101', name: 'Room 101 – Grade 7 Math', seats: [[0.22, 0.5], [0.48, 0.5], [0.74, 0.5], [0.48, 0.88]],
-    timeline: [['out of seat', 10, 40, '#c2410c'], ['sleeping', 20, 110, '#4338ca'], ['horseplay (no alert)', 50, 51.5, '#6b7280'], ['fight', 68, 76, '#b91c1c']],
-    script(t, a, room) {
-      once(room, 'leave', t, 10, () => a[2].moveTo(0.90, 0.22));
-      once(room, 'back', t, 40, () => a[2].moveTo(...room.seats[2]));
-      if (t >= 20) { a[3].headDrop = Math.min(1, (t - 20) / 3); a[3].jitter = 0.0005; }
-      once(room, 'hp1', t, 50, () => { a[0].jitter = a[1].jitter = 0.03; a[0].armsUp = a[1].armsUp = true; a[0].moveTo(0.32, 0.5); a[1].moveTo(0.39, 0.5); });
-      once(room, 'hp2', t, 51.5, () => { a[0].jitter = a[1].jitter = 0.002; a[0].armsUp = a[1].armsUp = false; a[0].moveTo(...room.seats[0]); a[1].moveTo(...room.seats[1]); });
-      once(room, 'f1', t, 68, () => { a[0].moveTo(0.32, 0.5); a[1].moveTo(0.39, 0.5); a[0].jitter = a[1].jitter = 0.025; a[0].armsUp = a[1].armsUp = true; });
-      once(room, 'f2', t, 76, () => { a[0].moveTo(...room.seats[0]); a[1].moveTo(...room.seats[1]); a[0].jitter = a[1].jitter = 0.002; a[0].armsUp = a[1].armsUp = false; });
-    } },
-  { id: 'room_102', name: 'Room 102 – Grade 8 Science', seats: [[0.25, 0.6], [0.5, 0.6], [0.75, 0.6]],
-    timeline: [['sleeping', 30, 110, '#4338ca'], ['out of seat', 55, 110, '#c2410c'], ['horseplay (no alert)', 85, 86.5, '#6b7280']],
-    script(t, a, room) {
-      if (t >= 30) { a[1].headDrop = Math.min(1, (t - 30) / 3); a[1].jitter = 0.0005; }
-      once(room, 'leave', t, 55, () => a[2].moveTo(0.10, 0.14));
-      once(room, 'hp1', t, 85, () => { a[0].jitter = 0.03; a[0].armsUp = true; a[0].moveTo(0.40, 0.6); a[2].moveTo(0.47, 0.6); a[2].jitter = 0.03; });
-      once(room, 'hp2', t, 86.5, () => { a[0].jitter = a[2].jitter = 0.002; a[0].armsUp = false; a[0].moveTo(...room.seats[0]); a[2].moveTo(0.10, 0.14); });
-    } },
-];
-
-function resetRoom(room) {
-  room.actors = room.seats.map(([x, y], i) => new Actor(i + 1, x, y));
-  room.zones = room.seats.map(([x, y], i) => ({ id: 'S' + (i + 1), x1: x - 0.11, y1: y - 0.2, x2: x + 0.11, y2: y + 0.2 }));
-  room.tracks = new Map(); room.fired = new Set(); room.ring = []; room.recorders = []; room.alertTracks = new Map();
-}
-
-// =====================================================================================
 // Alert engine (port of alerts/engine.py)
 // =====================================================================================
 const alerts = []; const lastByKey = new Map(), lastByRoomBeh = new Map(), openByKey = new Map();
 let seq = 1;
+const conf = s => s >= 0.75 ? 'high' : s >= 0.5 ? 'medium' : 'low';
 function handleEvent(room, ev, ts) {
   const key = `${room.id}|${ev.behavior}|${[...ev.tracks].sort().join(',')}`, rb = `${room.id}|${ev.behavior}`;
   const openId = openByKey.get(key);
@@ -310,18 +265,17 @@ function handleEvent(room, ev, ts) {
   alerts.unshift(a); lastByKey.set(key, ts); lastByRoomBeh.set(rb, ts); openByKey.set(key, a.id);
   return a;
 }
-const conf = s => s >= 0.75 ? 'high' : s >= 0.5 ? 'medium' : 'low';
 function ack(id) {
   if (!staff()) return alert('Enter your staff ID first.');
   const a = alerts.find(x => x.id === id); if (a.status !== 'new') return;
-  a.status = 'acknowledged'; a.acknowledged_by = staff(); a.acknowledged_at = simT; renderQueue(); renderLog();
+  a.status = 'acknowledged'; a.acknowledged_by = staff(); a.acknowledged_at = now(); renderQueue(); renderLog();
 }
 function review(id, outcome, btn) {
   if (!staff()) return alert('Enter your staff ID first.');
   const a = alerts.find(x => x.id === id);
-  if (a.status === 'new') return alert('Alert must be acknowledged before it can be reviewed.');   // enforced server-side too (HTTP 409)
+  if (a.status === 'new') return alert('Alert must be acknowledged before it can be reviewed.');
   if (a.status !== 'acknowledged') return;
-  a.reviewed_by = staff(); a.reviewed_at = simT; a.notes = btn.closest('.alert').querySelector('textarea')?.value || '';
+  a.reviewed_by = staff(); a.reviewed_at = now(); a.notes = btn.closest('.alert').querySelector('textarea')?.value || '';
   if (outcome === 'confirm') { a.status = 'confirmed'; a.clip_flag = 'actionable'; } else { a.status = 'dismissed'; a.clip_flag = 'dismissed'; }
   openByKey.delete(`${a.room_id}|${a.behavior}|${a.track_ids.join(',')}`);
   renderQueue(); renderLog();
@@ -334,53 +288,25 @@ function expiry(a) {
 }
 
 // =====================================================================================
-// Rendering of the simulated camera frame
+// Rooms: shared per-frame processing (tracks -> classifiers -> alerts -> clips)
 // =====================================================================================
-function drawRoom(room, canvas, ts) {
-  const c = canvas.getContext('2d'), W = canvas.width, H = canvas.height;
-  c.fillStyle = '#23262e'; c.fillRect(0, 0, W, H);
-  c.fillStyle = '#2e323c'; c.fillRect(0, 0, W, H * 0.3);                    // wall
-  c.fillStyle = '#f1f1f1'; c.fillRect(W * 0.3, H * 0.05, W * 0.4, H * 0.2);  // whiteboard
-  for (const z of room.zones) { c.fillStyle = '#4a3b2a'; c.fillRect(z.x1 * W + 4, (z.y2 - 0.1) * H, (z.x2 - z.x1) * W - 8, 0.09 * H); }  // desks
-  c.strokeStyle = 'rgba(96,165,250,.35)'; c.setLineDash([4, 4]);
-  for (const z of room.zones) c.strokeRect(z.x1 * W, z.y1 * H, (z.x2 - z.x1) * W, (z.y2 - z.y1) * H);
-  c.setLineDash([]);
-  for (const a of room.actors) {
-    const cx = a.rx * W, cy = a.ry * H, w = a.w * W, h = a.h * H, top = cy - h / 2;
-    const shoulderY = top + 0.25 * h, hipY = top + 0.6 * h, noseY = top + 0.1 * h + a.headDrop * 0.35 * h;
-    c.strokeStyle = '#dcd6c8'; c.lineWidth = 3; c.lineCap = 'round';
-    c.beginPath(); c.moveTo(cx, shoulderY); c.lineTo(cx, hipY); c.stroke();
-    c.beginPath(); c.moveTo(cx - 0.35 * w, shoulderY); c.lineTo(cx + 0.35 * w, shoulderY); c.stroke();
-    const wy = a.armsUp ? top + 0.02 * h : hipY;
-    c.beginPath(); c.moveTo(cx - 0.35 * w, shoulderY); c.lineTo(cx - 0.55 * w, wy); c.moveTo(cx + 0.35 * w, shoulderY); c.lineTo(cx + 0.55 * w, wy); c.stroke();
-    c.beginPath(); c.moveTo(cx - 0.2 * w, hipY); c.lineTo(cx - 0.25 * w, top + h); c.moveTo(cx + 0.2 * w, hipY); c.lineTo(cx + 0.25 * w, top + h); c.stroke();
-    c.fillStyle = '#e8c9a0'; c.beginPath(); c.arc(cx, noseY, 0.09 * h, 0, Math.PI * 2); c.fill();
+const ROOMS = [];
+const roomName = id => (ROOMS.find(r => r.id === id) || { name: id }).name;
+const clipCanvas = Object.assign(document.createElement('canvas'), { width: CLIP.w, height: CLIP.h });
+function processFrame(room, dets, ts) {
+  // dets: [{id, cx, cy, w, h, headDrop, armsUp}]
+  for (const d of dets) { if (!room.tracks.has(d.id)) room.tracks.set(d.id, new TrackState(d.id, room)); room.tracks.get(d.id).observe(d, ts); }
+  for (const [id, st] of room.tracks) if (ts - st.lastSeen > TRACK_TTL) room.tracks.delete(id);
+  // clip ring buffer at CLIP.fps
+  if (ts - room.lastClipTs >= 1 / CLIP.fps - 1e-3) {
+    room.lastClipTs = ts;
+    clipCanvas.getContext('2d').drawImage(room.canvas, 0, 0, CLIP.w, CLIP.h);
+    const jpg = clipCanvas.toDataURL('image/jpeg', 0.6);
+    room.ring.push({ ts, jpg }); while (room.ring.length > CLIP.pre * CLIP.fps) room.ring.shift();
+    for (const r of room.recorders) { r.frames.push({ ts, jpg }); if (ts - r.trigger >= CLIP.post) { r.done = true; r.alert.clip = { frames: r.frames, created: ts, trigger: r.trigger }; renderQueue(); renderLog(); } }
+    room.recorders = room.recorders.filter(r => !r.done);
   }
-  // detections overlay
-  for (const a of room.actors) {
-    const [x1, y1, x2, y2] = a.box(), alerting = room.alertTracks.get(a.id) > ts - 2;
-    c.strokeStyle = alerting ? '#ef4444' : '#22c55e'; c.lineWidth = alerting ? 3 : 1.5;
-    c.strokeRect(x1 * W, y1 * H, (x2 - x1) * W, (y2 - y1) * H);
-    c.fillStyle = c.strokeStyle; c.fillRect(x1 * W, y1 * H - 12, 30, 12);
-    c.fillStyle = '#000'; c.font = 'bold 9px system-ui'; c.fillText('id ' + a.id, x1 * W + 3, y1 * H - 3);
-  }
-  c.fillStyle = 'rgba(255,255,255,.6)'; c.font = '10px monospace'; c.fillText(`${room.id.toUpperCase()}  ${wall(ts)}  1280x720`, 6, 12);
-}
-
-// =====================================================================================
-// Simulation loop
-// =====================================================================================
-let simT = 0, lastReal = performance.now(), acc = 0;
-function tick(room, ts) {
-  room.script(ts, room.actors, room);
-  for (const a of room.actors) a.step(1 / FPS);
-  for (const a of room.actors) { if (!room.tracks.has(a.id)) room.tracks.set(a.id, new TrackState(a.id, room.zones)); room.tracks.get(a.id).observe(a, ts); }
-  const canvas = room.canvas; drawRoom(room, canvas, ts);
-  const jpg = canvas.toDataURL('image/jpeg', 0.5);
-  room.ring.push({ ts, jpg }); while (room.ring.length > CLIP.pre * FPS) room.ring.shift();
-  for (const r of room.recorders) { r.frames.push({ ts, jpg }); if (ts - r.trigger >= CLIP.post) { r.done = true; r.alert.clip = { frames: r.frames, created: ts, trigger: r.trigger }; renderQueue(); renderLog(); } }
-  room.recorders = room.recorders.filter(r => !r.done);
-  const states = [...room.tracks.values()];
+  const present = new Set(dets.map(d => d.id)), states = [...room.tracks.values()].filter(s => present.has(s.id));
   for (const st of states) {
     for (const ev of st.evaluate(states.filter(o => o !== st), ts)) {
       for (const id of ev.tracks) room.alertTracks.set(id, ts);
@@ -388,45 +314,203 @@ function tick(room, ts) {
       if (a) { room.recorders.push({ alert: a, trigger: ts, frames: [...room.ring], done: false }); renderQueue(); renderLog(); flash(room); }
     }
   }
-  const s = room.statusEl; s.textContent = `${room.actors.length} ppl · ${FPS} fps · ${room.recorders.length ? 'saving clip' : 'no recording'}`;
   room.el.classList.toggle('recording', room.recorders.length > 0);
   room.el.classList.toggle('alerting', alerts.some(a => a.room_id === room.id && (a.status === 'new' || a.status === 'acknowledged')));
+  room.fpsWin.push(ts); room.fpsWin = room.fpsWin.filter(t => ts - t <= 2);
+  const fps = room.fpsWin.length > 1 ? ((room.fpsWin.length - 1) / (ts - room.fpsWin[0])).toFixed(1) : '–';
+  room.statusEl.textContent = `${dets.length} ppl · ${fps} fps · ${room.recorders.length ? 'saving clip' : 'no recording'}`;
 }
 function flash(room) { room.el.animate([{ boxShadow: '0 0 0 6px rgba(229,72,77,.6)' }, { boxShadow: '0 0 0 0 rgba(229,72,77,0)' }], 900); }
-function loop(now) {
-  const speed = +$('#speed').value; acc += (now - lastReal) / 1000 * speed; lastReal = now;
-  let steps = 0;
-  while (acc >= 1 / FPS && steps++ < 40) { acc -= 1 / FPS; simT += 1 / FPS; for (const r of ROOMS) tick(r, simT); }
-  if (simT >= SCENARIO_LEN) restart(false);
-  $('#clock').textContent = `scenario t = ${fmtT(simT)}`;
-  renderTimeline();
-  requestAnimationFrame(loop);
+function drawOverlays(room, dets, kps) {
+  const c = room.canvas.getContext('2d'), W = room.canvas.width, H = room.canvas.height, ts = now();
+  c.setLineDash([5, 4]); c.lineWidth = 1.5;
+  for (const z of room.zones) { c.strokeStyle = 'rgba(96,165,250,.8)'; c.strokeRect(z.x1 * W, z.y1 * H, (z.x2 - z.x1) * W, (z.y2 - z.y1) * H);
+    c.fillStyle = 'rgba(96,165,250,.9)'; c.font = '11px system-ui'; c.fillText(z.id, z.x1 * W + 4, z.y1 * H + 13); }
+  c.setLineDash([]);
+  if (room.drawRect) { const r = room.drawRect; c.strokeStyle = '#fbbf24'; c.strokeRect(Math.min(r.x0, r.x1) * W, Math.min(r.y0, r.y1) * H, Math.abs(r.x1 - r.x0) * W, Math.abs(r.y1 - r.y0) * H); }
+  for (const d of dets) {
+    const alerting = room.alertTracks.get(d.id) > ts - 2, x1 = (d.cx - d.w / 2) * W, y1 = (d.cy - d.h / 2) * H;
+    if (kps && kps.get(d.id)) drawSkeleton(c, kps.get(d.id), W, H);
+    c.strokeStyle = alerting ? '#ef4444' : '#22c55e'; c.lineWidth = alerting ? 3 : 1.5; c.strokeRect(x1, y1, d.w * W, d.h * H);
+    c.fillStyle = c.strokeStyle; c.fillRect(x1, y1 - 13, 34, 13); c.fillStyle = '#000'; c.font = 'bold 10px system-ui'; c.fillText('id ' + d.id, x1 + 3, y1 - 3);
+    c.fillStyle = 'rgba(255,255,255,.75)'; c.font = '10px monospace';
+    c.fillText(`m ${(room.tracks.get(d.id)?.latest?.motion || 0).toFixed(2)}${d.headDrop != null ? ' hd ' + d.headDrop.toFixed(2) : ''}${d.armsUp ? ' ↑' : ''}`, x1 + 2, y1 + d.h * H - 4);
+  }
+  c.fillStyle = 'rgba(255,255,255,.6)'; c.font = '10px monospace'; c.fillText(`${room.id.toUpperCase()}  ${wall(ts)}  ${room.srcW}x${room.srcH}`, 6, 12);
 }
-function restart(clearAlerts) {
-  simT = 0; acc = 0; for (const r of ROOMS) resetRoom(r);
-  lastByKey.clear(); lastByRoomBeh.clear(); openByKey.clear();
-  if (clearAlerts) { alerts.length = 0; seq = 1; renderQueue(); renderLog(); }
+const EDGES = [[5,7],[7,9],[6,8],[8,10],[5,6],[5,11],[6,12],[11,12],[11,13],[13,15],[12,14],[14,16],[0,5],[0,6]];
+function drawSkeleton(c, kp, W, H) {
+  c.strokeStyle = 'rgba(250,204,21,.8)'; c.lineWidth = 2;
+  for (const [a, b] of EDGES) if (kp[a] && kp[b] && kp[a][2] >= 0.3 && kp[b][2] >= 0.3) { c.beginPath(); c.moveTo(kp[a][0] * W, kp[a][1] * H); c.lineTo(kp[b][0] * W, kp[b][1] * H); c.stroke(); }
 }
-$('#restart').onclick = () => restart(true);
+
+// ------------------------------------------------------------------- room shell + zones
+function makeRoom(id, name, kind) {
+  const el = document.createElement('div'); el.className = 'room'; el.id = 'room-' + id;
+  el.innerHTML = `<canvas width="640" height="360"></canvas><span class="rec">● REC clip</span>
+    <div class="tools"><button class="small zone-draw" title="Drag on the video to add a seat zone">Draw zone</button><button class="small zone-clear" title="Remove all seat zones">Clear</button><button class="small room-close" title="Remove this room">✕</button></div>
+    <div class="label"><span>${name}</span><span class="stats"></span></div>`;
+  $('#grid').appendChild(el);
+  const room = { id, name, kind, el, canvas: el.querySelector('canvas'), statusEl: el.querySelector('.stats'), tracks: new Map(), alertTracks: new Map(),
+                 ring: [], recorders: [], lastClipTs: -1, fpsWin: [], zones: [], drawing: false, drawRect: null, srcW: 0, srcH: 0, active: true };
+  ROOMS.push(room); $('#f-room').add(new Option(name, id)); $('#roomcount').textContent = ROOMS.length + (ROOMS.length === 1 ? ' camera' : ' cameras');
+  // zone drawing
+  const cv = room.canvas, norm = e => { const r = cv.getBoundingClientRect(); return [Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)), Math.min(1, Math.max(0, (e.clientY - r.top) / r.height))]; };
+  el.querySelector('.zone-draw').onclick = e => { room.drawing = !room.drawing; e.target.classList.toggle('on', room.drawing); cv.classList.toggle('drawing', room.drawing); };
+  el.querySelector('.zone-clear').onclick = () => { room.zones = []; saveZones(room); for (const t of room.tracks.values()) t.homeZone = null; };
+  cv.addEventListener('pointerdown', e => { if (!room.drawing) return; const [x, y] = norm(e); room.drawRect = { x0: x, y0: y, x1: x, y1: y }; cv.setPointerCapture(e.pointerId); });
+  cv.addEventListener('pointermove', e => { if (room.drawRect) { const [x, y] = norm(e); room.drawRect.x1 = x; room.drawRect.y1 = y; } });
+  cv.addEventListener('pointerup', () => { const r = room.drawRect; room.drawRect = null; if (!r) return;
+    const z = { id: 'S' + (room.zones.length + 1), x1: Math.min(r.x0, r.x1), y1: Math.min(r.y0, r.y1), x2: Math.max(r.x0, r.x1), y2: Math.max(r.y0, r.y1) };
+    if (z.x2 - z.x1 > 0.03 && z.y2 - z.y1 > 0.03) { room.zones.push(z); saveZones(room); }
+    room.drawing = false; el.querySelector('.zone-draw').classList.remove('on'); cv.classList.remove('drawing'); });
+  el.querySelector('.room-close').onclick = () => { room.active = false; room.stop?.(); el.remove(); ROOMS.splice(ROOMS.indexOf(room), 1); $('#roomcount').textContent = ROOMS.length + ' cameras'; };
+  return room;
+}
+const saveZones = room => room.zoneKey && ls.set(room.zoneKey, JSON.stringify(room.zones));
+const loadZones = room => { try { room.zones = JSON.parse(ls.get(room.zoneKey) || '[]'); } catch { room.zones = []; } };
 
 // =====================================================================================
-// UI
+// Live camera room: getUserMedia -> MoveNet MultiPose (browser) -> tracks
 // =====================================================================================
-function buildGrid() {
-  $('#grid').innerHTML = ROOMS.map(r => `<div class="room" id="room-${r.id}"><canvas width="640" height="360"></canvas><span class="rec">● REC clip</span><div class="label"><span>${r.name}</span><span class="stats"></span></div></div>`).join('');
-  for (const r of ROOMS) { r.el = $(`#room-${r.id}`); r.canvas = r.el.querySelector('canvas'); r.statusEl = r.el.querySelector('.stats'); $('#f-room').add(new Option(r.name, r.id)); }
-  $('#roomcount').textContent = ROOMS.length + ' cameras';
-  $('#timeline').innerHTML = ROOMS.map(r => `<div class="tl-name">${r.name}</div><div class="tl-track" id="tl-${r.id}">${r.timeline.map(([n, s, e, col]) => `<div class="tl-ev" style="left:${s / SCENARIO_LEN * 100}%;width:${(e - s) / SCENARIO_LEN * 100}%;background:${col}" title="${n} ${s}–${e}s">${n}</div>`).join('')}<div class="tl-cursor"></div></div>`).join('');
+let camCount = 0, detectorPromise = null;
+async function loadDetector() {
+  if (typeof tf === 'undefined' || typeof poseDetection === 'undefined') throw new Error('the TensorFlow.js scripts from cdn.jsdelivr.net could not be downloaded');
+  $('#modelstatus').textContent = 'loading pose model…';
+  await tf.setBackend('webgl'); await tf.ready();
+  const det = await poseDetection.createDetector(poseDetection.SupportedModels.MoveNet,
+    { modelType: poseDetection.movenet.modelType.MULTIPOSE_LIGHTNING, enableTracking: true, trackerType: poseDetection.TrackerType.BoundingBox });
+  $('#modelstatus').textContent = 'MoveNet MultiPose · webgl';
+  return det;
 }
-function renderTimeline() { document.querySelectorAll('.tl-cursor').forEach(c => c.style.left = (simT / SCENARIO_LEN * 100) + '%'); }
-const roomName = id => ROOMS.find(r => r.id === id).name;
+async function addCamera(deviceId) {
+  camCount++;
+  const id = 'cam_' + camCount, name = `Camera ${camCount}` + (deviceId ? '' : ' (default)');
+  const room = makeRoom(id, name, 'live');
+  const overlay = document.createElement('div'); overlay.className = 'overlay'; room.el.appendChild(overlay);
+  const status = (msg, retry) => { overlay.innerHTML = `<p>${msg}</p>` + (retry ? '<button class="primary">Retry</button>' : ''); overlay.style.display = ''; if (retry) overlay.querySelector('button').onclick = retry; };
+  status('Requesting camera permission…');
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ video: { deviceId: deviceId ? { exact: deviceId } : undefined, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 15 } }, audio: false });
+  } catch (e) { status(`Camera access failed: ${e.name}. ${e.name === 'NotAllowedError' ? 'Allow camera permission for this site and retry.' : e.message}`, () => { room.el.querySelector('.room-close').click(); addCamera(deviceId); }); return; }
+  const video = Object.assign(document.createElement('video'), { srcObject: stream, muted: true, playsInline: true, autoplay: true });
+  await new Promise(res => { video.onloadedmetadata = () => { video.play().then(res, res); }; });
+  room.srcW = video.videoWidth; room.srcH = video.videoHeight;
+  room.canvas.width = Math.min(640, room.srcW); room.canvas.height = Math.round(room.canvas.width * room.srcH / room.srcW);
+  const track = stream.getVideoTracks()[0];
+  room.zoneKey = 'zones:' + (track.getSettings().deviceId || 'default'); loadZones(room);
+  room.el.querySelector('.label span').textContent = name + ' · ' + (track.label || 'camera');
+  room.stop = () => { stream.getTracks().forEach(t => t.stop()); };
+  await refreshDevices();
+  status('Loading pose model (first time ~5 MB)…');
+  let detector;
+  try { detector = await (detectorPromise ||= loadDetector()); }
+  catch (e) { detectorPromise = null; $('#modelstatus').textContent = 'model failed to load'; status(`Could not load the pose model: ${e.message}. Check your connection and retry.`, () => { overlay.style.display = 'none'; addCamera(deviceId); room.el.querySelector('.room-close').click(); }); return; }
+  overlay.style.display = 'none'; $('#hint').style.display = 'none';
+  // Each camera keeps its own tracker state, so its own detector instance.
+  let own = detector;
+  if (ROOMS.filter(r => r.kind === 'live').length > 1) own = await loadDetector();
+  const c = room.canvas.getContext('2d');
+  (async function loop() {
+    while (room.active) {
+      if (video.readyState < 2) { await new Promise(r => setTimeout(r, 50)); continue; }
+      let poses = [];
+      try { poses = await own.estimatePoses(video, { maxPoses: 6, flipHorizontal: false }); } catch (e) { console.warn(e); }
+      const ts = now(), dets = [], kps = new Map();
+      for (const p of poses) {
+        if ((p.score ?? 1) < 0.2 || p.id == null) continue;
+        const kp = p.keypoints.map(k => [k.x / room.srcW, k.y / room.srcH, k.score ?? 0]);
+        const good = kp.filter(k => k[2] >= 0.3); if (good.length < 4) continue;
+        let x1 = Math.min(...good.map(k => k[0])), x2 = Math.max(...good.map(k => k[0])), y1 = Math.min(...good.map(k => k[1])), y2 = Math.max(...good.map(k => k[1]));
+        const pw = (x2 - x1) * 0.15, ph = (y2 - y1) * 0.12; x1 -= pw; x2 += pw; y1 -= ph; y2 += ph * 0.5;   // keypoints sit inside the body; pad to a box
+        const nose = kp[0], ls = kp[5], rs = kp[6], lh = kp[11], rh = kp[12], lw = kp[9], rw = kp[10];
+        let headDrop = null, armsUp = false;
+        if (nose[2] >= 0.3 && ls[2] >= 0.3 && rs[2] >= 0.3) {
+          const shY = (ls[1] + rs[1]) / 2, torso = (lh[2] >= 0.3 && rh[2] >= 0.3) ? Math.max(Math.abs((lh[1] + rh[1]) / 2 - shY), 0.02) : Math.max((y2 - y1) * 0.35, 0.02);
+          headDrop = (nose[1] - shY) / torso;
+          armsUp = (lw[2] >= 0.3 && lw[1] < ls[1]) || (rw[2] >= 0.3 && rw[1] < rs[1]);
+        }
+        dets.push({ id: p.id, cx: (x1 + x2) / 2, cy: (y1 + y2) / 2, w: Math.max(x2 - x1, 0.02), h: Math.max(y2 - y1, 0.02), headDrop, armsUp });
+        kps.set(p.id, kp);
+      }
+      c.drawImage(video, 0, 0, room.canvas.width, room.canvas.height);
+      drawOverlays(room, dets, kps);
+      processFrame(room, dets, ts);
+    }
+  })();
+}
+async function refreshDevices() {
+  try {
+    const devs = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput');
+    const sel = $('#devices'), cur = sel.value; sel.innerHTML = '<option value="">default camera</option>';
+    devs.forEach((d, i) => sel.add(new Option(d.label || `Camera ${i + 1}`, d.deviceId)));
+    sel.value = cur;
+  } catch {}
+}
+$('#addcam').onclick = () => { if (!navigator.mediaDevices?.getUserMedia) return alert('This browser cannot access cameras. Use Chrome, Edge, Firefox or Safari over HTTPS.'); addCamera($('#devices').value); };
+refreshDevices();
+
+// =====================================================================================
+// Simulated room (optional): scripted actors so every alert type can be seen without acting
+// =====================================================================================
+class Actor {
+  constructor(id, x, y) { Object.assign(this, { id, x, y, w: 0.11, h: 0.36, headDrop: 0, armsUp: false, jitter: 0.002, speed: 0.3, target: null, rx: x, ry: y }); }
+  moveTo(x, y) { this.target = [x, y]; }
+  step(dt) {
+    if (this.target) { const [tx, ty] = this.target, dx = tx - this.x, dy = ty - this.y, dist = Math.hypot(dx, dy), m = this.speed * dt;
+      if (dist <= m) { this.x = tx; this.y = ty; this.target = null; } else { this.x += dx / dist * m; this.y += dy / dist * m; } }
+    this.rx = Math.min(0.98, Math.max(0.02, this.x + gauss(this.jitter))); this.ry = Math.min(0.98, Math.max(0.02, this.y + gauss(this.jitter)));
+  }
+}
+let simCount = 0;
+function addSimRoom() {
+  simCount++;
+  const seats = [[0.22, 0.5], [0.48, 0.5], [0.74, 0.5], [0.48, 0.88]];
+  const room = makeRoom('sim_' + simCount, `Simulated room ${simCount}`, 'sim');
+  room.zones = seats.map(([x, y], i) => ({ id: 'S' + (i + 1), x1: x - 0.11, y1: y - 0.2, x2: x + 0.11, y2: y + 0.2 }));
+  room.srcW = 1280; room.srcH = 720;
+  const actors = seats.map(([x, y], i) => new Actor(i + 1, x, y)), fired = new Set(), t0 = now();
+  const once = (tag, t, when, fn) => { if (!fired.has(tag) && t >= when) { fired.add(tag); fn(); } };
+  const script = (t, a) => {
+    once('leave', t, 10, () => a[2].moveTo(0.90, 0.22)); once('back', t, 40, () => a[2].moveTo(...seats[2]));
+    if (t >= 20) { a[3].headDrop = Math.min(1, (t - 20) / 3); a[3].jitter = 0.0005; }
+    once('hp1', t, 50, () => { a[0].jitter = a[1].jitter = 0.03; a[0].armsUp = a[1].armsUp = true; a[0].moveTo(0.32, 0.5); a[1].moveTo(0.39, 0.5); });
+    once('hp2', t, 51.5, () => { a[0].jitter = a[1].jitter = 0.002; a[0].armsUp = a[1].armsUp = false; a[0].moveTo(...seats[0]); a[1].moveTo(...seats[1]); });
+    once('f1', t, 68, () => { a[0].moveTo(0.32, 0.5); a[1].moveTo(0.39, 0.5); a[0].jitter = a[1].jitter = 0.025; a[0].armsUp = a[1].armsUp = true; });
+    once('f2', t, 76, () => { a[0].moveTo(...seats[0]); a[1].moveTo(...seats[1]); a[0].jitter = a[1].jitter = 0.002; a[0].armsUp = a[1].armsUp = false; });
+    once('reset', t, 100, () => { fired.clear(); a[3].headDrop = 0; a[3].jitter = 0.002; });
+  };
+  let last = now(), simT = 0;
+  const c = room.canvas.getContext('2d'), W = room.canvas.width, H = room.canvas.height;
+  const timer = setInterval(() => {
+    const t = now(), dt = Math.min(0.2, t - last); last = t; simT += dt; if (simT >= 100) simT = 0;
+    script(simT, actors); for (const a of actors) a.step(dt);
+    c.fillStyle = '#23262e'; c.fillRect(0, 0, W, H); c.fillStyle = '#2e323c'; c.fillRect(0, 0, W, H * 0.3); c.fillStyle = '#f1f1f1'; c.fillRect(W * 0.3, H * 0.05, W * 0.4, H * 0.2);
+    for (const z of room.zones) { c.fillStyle = '#4a3b2a'; c.fillRect(z.x1 * W + 4, (z.y2 - 0.1) * H, (z.x2 - z.x1) * W - 8, 0.09 * H); }
+    const dets = [], kps = new Map();
+    for (const a of actors) {
+      const cx = a.rx, cy = a.ry, w = a.w, h = a.h, top = cy - h / 2, shY = top + 0.25 * h, hipY = top + 0.6 * h, noseY = top + 0.1 * h + a.headDrop * 0.35 * h, wy = a.armsUp ? top + 0.02 * h : hipY;
+      const kp = []; kp[0] = [cx, noseY, 1]; kp[5] = [cx - 0.35 * w, shY, 1]; kp[6] = [cx + 0.35 * w, shY, 1]; kp[7] = [cx - 0.45 * w, shY + 0.15 * h, 1]; kp[8] = [cx + 0.45 * w, shY + 0.15 * h, 1];
+      kp[9] = [cx - 0.5 * w, wy, 1]; kp[10] = [cx + 0.5 * w, wy, 1]; kp[11] = [cx - 0.2 * w, hipY, 1]; kp[12] = [cx + 0.2 * w, hipY, 1]; kp[13] = [cx - 0.22 * w, hipY + 0.2 * h, 1]; kp[14] = [cx + 0.22 * w, hipY + 0.2 * h, 1]; kp[15] = [cx - 0.25 * w, top + h, 1]; kp[16] = [cx + 0.25 * w, top + h, 1];
+      c.fillStyle = '#e8c9a0'; c.beginPath(); c.arc(cx * W, noseY * H, 0.09 * h * H, 0, Math.PI * 2); c.fill();
+      dets.push({ id: a.id, cx, cy, w, h, headDrop: (noseY - shY) / (hipY - shY), armsUp: a.armsUp }); kps.set(a.id, kp);
+    }
+    drawOverlays(room, dets, kps); processFrame(room, dets, t);
+  }, 100);
+  room.stop = () => clearInterval(timer);
+}
+$('#addsim').onclick = addSimRoom;
+
+// =====================================================================================
+// Queue, log, clip viewer
+// =====================================================================================
 function renderQueue() {
   const q = alerts.filter(a => a.status === 'new').sort((a, b) => a.first_ts - b.first_ts).concat(alerts.filter(a => a.status === 'acknowledged').sort((a, b) => a.first_ts - b.first_ts));
   $('#qcount').style.display = q.length ? '' : 'none'; $('#qcount').textContent = q.length;
   const el = $('#queue');
-  if (!q.length) { el.innerHTML = '<div class="empty">No alerts awaiting review.<br><small>Watch the timeline: the first alert lands ~18 s into the scenario.</small></div>'; return; }
-  const open = new Set([...el.querySelectorAll('textarea')].map(t => [t.closest('.alert').dataset.id, t.value]));
-  const notes = Object.fromEntries(open);
+  if (!q.length) { el.innerHTML = '<div class="empty">No alerts awaiting review.</div>'; return; }
+  const notes = Object.fromEntries([...el.querySelectorAll('textarea')].map(t => [t.closest('.alert').dataset.id, t.value]));
   el.innerHTML = q.map(a => `
     <div class="alert" data-id="${a.id}">
       <div class="row"><b>${nice(a.behavior)}</b> ${badge(a.confidence, a.confidence)} ${badge(a.status, a.status)} <span style="color:var(--muted)">${roomName(a.room_id)}</span></div>
@@ -448,14 +532,12 @@ function renderLog() {
       <td>${wall(a.first_ts)}</td><td>${roomName(a.room_id)}</td><td>${nice(a.behavior)}</td>
       <td>${badge(a.confidence, a.confidence)}</td><td>${badge(a.status, a.status)}</td>
       <td>${a.reviewed_by || a.acknowledged_by || ''}</td><td>${a.clip ? badge(a.clip_flag === 'actionable' ? 'confirmed' : 'low', a.clip_flag) : 'saving…'}</td><td>${expiry(a)}</td>
-    </tr>`).join('') : '<tr><td colspan="8" class="empty">No incidents match.</td></tr>';
+    </tr>`).join('') : '<tr><td colspan="8" class="empty">No incidents yet.</td></tr>';
 }
 ['#f-status', '#f-room', '#f-behavior'].forEach(s => $(s).onchange = renderLog);
-
-// clip viewer
 let clip = null, clipTimer = null, clipIdx = 0;
 function openClip(id) {
-  const a = alerts.find(x => x.id === id); if (!a.clip) return; clip = a;
+  const a = alerts.find(x => x.id === id); if (!a?.clip) return; clip = a;
   const f = a.clip.frames;
   $('#cliphead').innerHTML = `<b>${nice(a.behavior)}</b> · ${roomName(a.room_id)} · ${wall(f[0].ts)} → ${wall(f[f.length - 1].ts)} · ${f.length} frames (${CLIP.pre}s pre-roll + ${CLIP.post}s post-roll)`;
   $('#clipmeta').innerHTML = `<span>Alert</span><b>${a.id} · ${badge(a.status, a.status)} · clip ${badge(a.clip_flag === 'actionable' ? 'confirmed' : 'low', a.clip_flag)}</b>
@@ -465,13 +547,12 @@ function openClip(id) {
   $('#clipseek').max = f.length - 1; clipIdx = 0; showFrame(0); $('#clipdlg').showModal(); play();
 }
 function showFrame(i) { clipIdx = i; const f = clip.clip.frames[i]; $('#clipimg').src = f.jpg; $('#clipseek').value = i; const off = f.ts - clip.clip.trigger; $('#cliptime').textContent = (off >= 0 ? '+' : '') + off.toFixed(1) + 's'; }
-function play() { clearInterval(clipTimer); $('#clipplay').textContent = '⏸'; clipTimer = setInterval(() => { if (clipIdx + 1 >= clip.clip.frames.length) return pause(); showFrame(clipIdx + 1); }, 1000 / FPS); }
+function play() { clearInterval(clipTimer); $('#clipplay').textContent = '⏸'; clipTimer = setInterval(() => { if (clipIdx + 1 >= clip.clip.frames.length) return pause(); showFrame(clipIdx + 1); }, 1000 / CLIP.fps); }
 function pause() { clearInterval(clipTimer); clipTimer = null; $('#clipplay').textContent = '▶'; }
 $('#clipplay').onclick = () => clipTimer ? pause() : play();
 $('#clipseek').oninput = e => { pause(); showFrame(+e.target.value); };
 $('#clipdlg').addEventListener('close', pause);
-
-buildGrid(); restart(true); requestAnimationFrame(loop);
+renderQueue(); renderLog();
 </script>
 </body>
 </html>
