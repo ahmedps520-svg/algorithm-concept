@@ -180,6 +180,27 @@ class ModelConfig(BaseModel):
     tracker: str = "bytetrack.yaml"
 
 
+class VerifierConfig(BaseModel):
+    """Second-stage clip review by a local vision-language model through Ollama.
+
+    Runs once per alert after its clip is saved: a contact sheet of frames around the trigger
+    is sent to the model, which returns a verdict, confidence and one-sentence reason. This is
+    shown to the reviewer as an AI second opinion. It never confirms or dismisses anything on
+    its own."""
+
+    enabled: bool = False
+    base_url: str = "http://localhost:11434"
+    model: str = "qwen3-vl:8b"
+    # Frame offsets (seconds relative to the trigger) to put on the contact sheet.
+    frame_offsets_s: list[float] = Field(default_factory=lambda: [-6.0, -3.0, -1.0, 0.0, 2.0, 5.0])
+    tile_width: int = 480
+    columns: int = 3
+    timeout_s: float = 180.0
+    temperature: float = 0.0
+    # Keep the model's reply short; the 32B spills into system RAM and runs at a few tokens/s.
+    max_tokens: int = 200
+
+
 class DashboardConfig(BaseModel):
     host: str = "0.0.0.0"
     port: int = 8080
@@ -194,6 +215,7 @@ class SystemConfig(BaseModel):
     debounce: DebounceConfig = DebounceConfig()
     storage: StorageConfig = StorageConfig()
     dashboard: DashboardConfig = DashboardConfig()
+    verifier: VerifierConfig = VerifierConfig()
     # Defaults every room inherits unless it overrides.
     default_thresholds: BehaviorThresholds = BehaviorThresholds()
     # Processing FPS target per room; frames above this are dropped.

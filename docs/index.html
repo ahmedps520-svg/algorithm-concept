@@ -91,7 +91,7 @@
         <select id="f-room"><option value="">any room</option></select>
         <select id="f-behavior"><option value="">any behavior</option><option value="fighting">fighting</option><option value="sleeping">sleeping</option><option value="out_of_seat">out of seat</option><option value="talking">talking</option></select>
       </div>
-      <div style="overflow:auto"><table><thead><tr><th>Time</th><th>Room</th><th>Behavior</th><th>Conf</th><th>Status</th><th>Reviewed by</th><th>Clip</th><th>Clip expires</th></tr></thead>
+      <div style="overflow:auto"><table><thead><tr><th>Time</th><th>Room</th><th>Behavior</th><th>Conf</th><th>AI opinion</th><th>Status</th><th>Reviewed by</th><th>Clip</th><th>Clip expires</th></tr></thead>
       <tbody id="log"></tbody></table></div>
     </section>
     <section id="teach">
@@ -110,6 +110,16 @@
       <div id="train-counts" class="note" style="border:0"></div>
       <div id="train-result" class="note" style="border:0"></div>
     </section>
+    <section id="verifier">
+      <h2>AI second opinion <span class="badge b-low" id="vstatus">off</span><span class="spacer"></span><label style="font-weight:400;text-transform:none;letter-spacing:0"><input type="checkbox" id="v-on"> enabled</label></h2>
+      <div class="note">A local vision-language model (Ollama) looks at 6 frames from each saved clip and says whether the alert looks real, a false alarm, or unclear, with a reason. Advisory only: the reviewer still decides. Run <code>ollama pull qwen3-vl:8b</code>, then start Ollama with <code>OLLAMA_ORIGINS=https://ahmedps520-svg.github.io</code> so this page may call it.</div>
+      <div class="filters" style="align-items:center">
+        <label>Ollama URL <input id="v-url" value="http://localhost:11434" style="width:200px"></label>
+        <label>Model <input id="v-model" value="qwen3-vl:8b" style="width:130px"></label>
+        <button id="v-test" class="small">Test connection</button>
+        <span id="v-msg" class="live-status"></span>
+      </div>
+    </section>
     <section>
       <details>
         <summary>How this works</summary>
@@ -121,6 +131,7 @@
           <li>A seat zone is created automatically around anyone who stays put for a few seconds without one (labelled "auto seat"); you can also draw zones by hand.</li>
           <li>Repeats merge into the open alert; per-track (120 s) and per-room (30 s) cooldowns stop duplicates.</li>
           <li>On alert a clip is kept from a 10 s pre-roll ring buffer plus 10 s post-roll. Nothing is recorded continuously.</li>
+          <li>Optionally, a local vision-language model (Ollama, qwen3-vl:8b) reviews a 6-frame contact sheet of each clip and gives an advisory verdict with a reason, shown on the alert card.</li>
           <li>A staff member must <b>acknowledge</b> then <b>confirm or dismiss</b>. Only a human confirm marks a clip actionable; the system takes no action itself. Retention: unreviewed 48 h, dismissed 24 h, confirmed 90 d.</li>
         </ol>
         <ul>
@@ -538,7 +549,7 @@ function processFrame(room, dets, ts) {
     clipCanvas.getContext('2d').drawImage(room.canvas, 0, 0, CLIP.w, CLIP.h);
     const jpg = clipCanvas.toDataURL('image/jpeg', 0.6);
     room.ring.push({ ts, jpg }); while (room.ring.length > CLIP.pre * CLIP.fps) room.ring.shift();
-    for (const r of room.recorders) { r.frames.push({ ts, jpg }); if (ts - r.trigger >= CLIP.post) { r.done = true; r.alert.clip = { frames: r.frames, created: ts, trigger: r.trigger }; renderQueue(); renderLog(); } }
+    for (const r of room.recorders) { r.frames.push({ ts, jpg }); if (ts - r.trigger >= CLIP.post) { r.done = true; r.alert.clip = { frames: r.frames, created: ts, trigger: r.trigger }; renderQueue(); renderLog(); if (VER.on) verifyAlert(r.alert, false); } }
     room.recorders = room.recorders.filter(r => !r.done);
   }
   const present = new Set(dets.map(d => d.id)), states = [...room.tracks.values()].filter(s => present.has(s.id));
@@ -850,6 +861,74 @@ function addSimRoom() {
 $('#addsim').onclick = addSimRoom;
 
 // =====================================================================================
+// AI second opinion: local Ollama vision model on a contact sheet of clip frames
+// =====================================================================================
+const VER = { on: false, url: 'http://localhost:11434', model: 'qwen3-vl:8b', offsets: [-6, -3, -1, 0, 2, 5], cols: 3, tile: 480 };
+const GUIDE = {
+  fighting: ['physical aggression: hitting, kicking, shoving with force, grappling, one person clearly trying to hurt or dominate another', 'play-fighting, horseplay, high-fives, hugging, dancing, helping someone up, reaching past someone'],
+  sleeping: ['head down on the desk or arms, or eyes closed and slumped, staying that way', 'reading, writing, looking at a phone or paper on the desk, resting chin on hand while watching'],
+  out_of_seat: ['a student standing or walking away from their desk without an obvious task', 'leaning or reaching from the seat, briefly standing to hand something over, the teacher moving around'],
+  talking: ['a student turned to a neighbour and talking with them', 'answering the teacher, reading aloud, group work; without audio this is genuinely hard to tell'],
+};
+try { Object.assign(VER, JSON.parse(ls.get('verifier:v1') || '{}')); } catch {}
+$('#v-on').checked = VER.on; $('#v-url').value = VER.url; $('#v-model').value = VER.model;
+const saveVer = () => { VER.on = $('#v-on').checked; VER.url = $('#v-url').value.trim().replace(/\/$/, ''); VER.model = $('#v-model').value.trim(); ls.set('verifier:v1', JSON.stringify({ on: VER.on, url: VER.url, model: VER.model })); renderVerStatus(); };
+['#v-on', '#v-url', '#v-model'].forEach(k => $(k).addEventListener('change', saveVer));
+function renderVerStatus(txt, cls) { const b = $('#vstatus'); b.textContent = txt || (VER.on ? VER.model : 'off'); b.className = 'badge ' + (cls || (VER.on ? 'b-acknowledged' : 'b-low')); }
+renderVerStatus();
+$('#v-test').onclick = async () => {
+  saveVer(); $('#v-msg').textContent = 'checking…';
+  try { const r = await fetch(VER.url + '/api/tags'); const j = await r.json(); const names = (j.models || []).map(m => m.name);
+    const have = names.some(n => n === VER.model || n.split(':')[0] === VER.model.split(':')[0]);
+    $('#v-msg').textContent = have ? `connected · ${VER.model} is pulled` : `connected, but ${VER.model} is not pulled (have: ${names.join(', ') || 'none'})`;
+    renderVerStatus(have ? VER.model + ' · ready' : 'model missing', have ? 'b-confirmed' : 'b-new');
+  } catch (e) { $('#v-msg').textContent = 'cannot reach Ollama: ' + e.message + ' — is it running, and was OLLAMA_ORIGINS set to this site?'; renderVerStatus('unreachable', 'b-new'); }
+};
+async function contactSheet(a) {
+  const frames = a.clip.frames, trig = a.clip.trigger, picks = [], used = [];
+  for (const off of VER.offsets) { const f = frames.reduce((b, x) => Math.abs(x.ts - trig - off) < Math.abs(b.ts - trig - off) ? x : b); picks.push(f); used.push(+(f.ts - trig).toFixed(1)); }
+  const imgs = await Promise.all(picks.map(f => new Promise(res => { const im = new Image(); im.onload = () => res(im); im.src = f.jpg; })));
+  const tw = VER.tile, th = Math.round(tw * imgs[0].height / imgs[0].width), rows = Math.ceil(imgs.length / VER.cols);
+  const cv = Object.assign(document.createElement('canvas'), { width: VER.cols * tw, height: rows * th }), c = cv.getContext('2d');
+  imgs.forEach((im, i) => { const r = Math.floor(i / VER.cols), col = i % VER.cols; c.drawImage(im, col * tw, r * th, tw, th); c.strokeStyle = '#fff'; c.lineWidth = 2; c.strokeRect(col * tw + 1, r * th + 1, tw - 2, th - 2);
+    c.fillStyle = 'rgba(0,0,0,.6)'; c.fillRect(col * tw, r * th, 64, 16); c.fillStyle = '#fff'; c.font = 'bold 12px system-ui'; c.fillText(`${used[i] >= 0 ? '+' : ''}${used[i]}s`, col * tw + 4, r * th + 12); });
+  return { b64: cv.toDataURL('image/jpeg', 0.85).split(',')[1], used };
+}
+function verifyPrompt(a, used) {
+  const [real, fake] = GUIDE[a.behavior] || ['the alerted behavior', 'anything else'];
+  return `You are helping a school staff member review an automated alert from a fixed classroom camera. The image is a contact sheet of ${used.length} frames from one clip, in reading order (left to right, then next row, ${VER.cols} per row); each frame is labelled with its time relative to the moment the alert fired: ${used.map(o => (o >= 0 ? '+' : '') + o + 's').join(', ')}.\n\nThe automated system flagged: ${a.behavior.replace(/_/g, ' ').toUpperCase()} involving ${a.track_ids.length} tracked person(s), sustained for ${a.sustained.toFixed(0)} seconds.\nCount it as REAL only if you see: ${real}.\nCount it as a FALSE ALARM if it is more like: ${fake}.\nBe conservative: if the frames are ambiguous, answer unclear with low confidence rather than guessing. Do not identify anyone. Describe only what is visible.\n\nReply with JSON only: {"verdict": "likely_real" | "likely_false_alarm" | "unclear", "what_is_happening": one sentence, "confidence": 0 to 1, "reason": one sentence, "people_involved": integer}.`;
+}
+function parseVerdict(text) {
+  const cands = [text]; const m1 = text.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/); if (m1) cands.unshift(m1[1]); const m2 = text.match(/\{[\s\S]*\}/); if (m2) cands.push(m2[0]);
+  let d = null; for (const c of cands) { try { const j = JSON.parse(c); if (j && typeof j === 'object' && 'verdict' in j) { d = j; break; } } catch {} }
+  if (!d) throw new Error('no JSON verdict in reply: ' + text.slice(0, 120));
+  let v = String(d.verdict || 'unclear').toLowerCase().replace(/ /g, '_'); if (!['likely_real', 'likely_false_alarm', 'unclear'].includes(v)) v = 'unclear';
+  let conf = parseFloat(d.confidence); if (isNaN(conf)) conf = 0; if (conf > 1) conf /= 100;
+  return { verdict: v, confidence: Math.max(0, Math.min(1, conf)), summary: String(d.what_is_happening || '').slice(0, 400), reason: String(d.reason || '').slice(0, 400) };
+}
+async function verifyAlert(a, manual) {
+  if (!a.clip || a.ai_busy) return; a.ai_busy = true; renderQueue();
+  const t0 = performance.now();
+  try {
+    const { b64, used } = await contactSheet(a);
+    const body = { model: VER.model, stream: false, format: 'json', options: { temperature: 0, num_predict: 200 }, messages: [{ role: 'user', content: verifyPrompt(a, used), images: [b64] }] };
+    const r = await fetch(VER.url + '/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + (await r.text()).slice(0, 120));
+    const j = await r.json(); const v = parseVerdict(j.message?.content || '');
+    Object.assign(a, { ai_verdict: v.verdict, ai_confidence: v.confidence, ai_summary: v.summary, ai_reason: v.reason, ai_model: VER.model, ai_ms: Math.round(performance.now() - t0) });
+    renderVerStatus(VER.model + ' · ready', 'b-confirmed');
+  } catch (e) { Object.assign(a, { ai_verdict: 'error', ai_confidence: null, ai_summary: '', ai_reason: 'verifier unavailable: ' + e.message, ai_model: VER.model }); if (manual) alert('AI second opinion failed: ' + e.message); }
+  a.ai_busy = false; renderQueue(); renderLog();
+}
+const AI_BADGE = { likely_real: ['confirmed', 'AI: likely real'], likely_false_alarm: ['low', 'AI: likely false alarm'], unclear: ['acknowledged', 'AI: unclear'], error: ['low', 'AI: unavailable'] };
+function aiLine(a) {
+  if (a.ai_busy) return '<div class="meta">AI second opinion: asking the model…</div>';
+  if (!a.ai_verdict) return a.clip ? `<div class="meta">AI second opinion: ${VER.on ? 'pending' : 'off'} <button class="small" onclick="verifyAlert(alerts.find(x => x.id === '${a.id}'), true)">run now</button></div>` : '';
+  const [cls, txt] = AI_BADGE[a.ai_verdict] || ['low', 'AI: ' + a.ai_verdict];
+  return `<div class="meta"><span class="badge b-${cls}">${txt}${a.ai_confidence != null ? ' ' + Math.round(a.ai_confidence * 100) + '%' : ''}</span> ${a.ai_summary || ''}${a.ai_reason ? ' — ' + a.ai_reason : ''} <span style="opacity:.6">(${a.ai_model}${a.ai_ms ? ', ' + (a.ai_ms / 1000).toFixed(1) + ' s' : ''}; advisory only)</span></div>`;
+}
+
+// =====================================================================================
 // Queue, log, clip viewer
 // =====================================================================================
 function renderQueue() {
@@ -864,6 +943,7 @@ function renderQueue() {
       <div class="meta">${wall(a.first_ts)} · sustained ${a.sustained.toFixed(1)}s · seen ${a.occurrences}× · tracks ${a.track_ids.join(', ')}</div>
       <div class="meta">${Object.entries(a.evidence).map(([k, v]) => `${k}=${v}`).join(' · ')}</div>
       ${a.behavior === 'talking' ? '<div class="meta" style="color:var(--ack)">Video-only cue, capped at low confidence. Not evidence on its own.</div>' : ''}
+      ${aiLine(a)}
       ${a.status === 'acknowledged' ? `<div class="meta">acknowledged by <b>${a.acknowledged_by}</b></div><textarea rows="2" placeholder="Review notes (optional)">${notes[a.id] || ''}</textarea>` : ''}
       <div class="actions">
         ${a.clip ? `<button onclick="openClip('${a.id}')">View clip</button>` : '<button disabled>clip saving…</button>'}
@@ -878,9 +958,9 @@ function renderLog() {
   $('#log').innerHTML = rows.length ? rows.map(a => `
     <tr class="clickable" onclick="${a.clip ? `openClip('${a.id}')` : ''}">
       <td>${wall(a.first_ts)}</td><td>${roomName(a.room_id)}</td><td>${nice(a.behavior)}</td>
-      <td>${badge(a.confidence, a.confidence)}</td><td>${badge(a.status, a.status)}</td>
+      <td>${badge(a.confidence, a.confidence)}</td><td>${a.ai_verdict ? badge((AI_BADGE[a.ai_verdict] || ['low'])[0], nice(a.ai_verdict.replace('likely_', '')) + (a.ai_confidence != null ? ' ' + Math.round(a.ai_confidence * 100) + '%' : '')) : '—'}</td><td>${badge(a.status, a.status)}</td>
       <td>${a.reviewed_by || a.acknowledged_by || ''}</td><td>${a.clip ? badge(a.clip_flag === 'actionable' ? 'confirmed' : 'low', a.clip_flag) : 'saving…'}</td><td>${expiry(a)}</td>
-    </tr>`).join('') : '<tr><td colspan="8" class="empty">No incidents yet.</td></tr>';
+    </tr>`).join('') : '<tr><td colspan="9" class="empty">No incidents yet.</td></tr>';
 }
 ['#f-status', '#f-room', '#f-behavior'].forEach(s => $(s).onchange = renderLog);
 let clip = null, clipTimer = null, clipIdx = 0;
@@ -891,6 +971,7 @@ function openClip(id) {
   $('#clipmeta').innerHTML = `<span>Alert</span><b>${a.id} · ${badge(a.status, a.status)} · clip ${badge(a.clip_flag === 'actionable' ? 'confirmed' : 'low', a.clip_flag)}</b>
     <span>Reviewer</span><b>${a.reviewed_by || a.acknowledged_by || '— (not yet reviewed)'}</b>
     <span>Notes</span><b>${a.notes || '—'}</b>
+    <span>AI opinion</span><b>${a.ai_verdict ? `${nice(a.ai_verdict)}${a.ai_confidence != null ? ' (' + Math.round(a.ai_confidence * 100) + '%)' : ''}: ${a.ai_summary || ''} ${a.ai_reason ? '— ' + a.ai_reason : ''}` : 'none'}</b>
     <span>Retention</span><b>auto-deletes ${expiry(a)} (${a.status === 'confirmed' ? RETENTION.actionable_d + ' days, confirmed' : a.status === 'dismissed' ? RETENTION.dismissed_h + ' h, dismissed' : RETENTION.unreviewed_h + ' h, unreviewed'})</b>`;
   $('#clipseek').max = f.length - 1; clipIdx = 0; showFrame(0); $('#clipdlg').showModal(); play();
 }

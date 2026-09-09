@@ -144,6 +144,27 @@ i.e. "there is voice activity in the room AND this track is turned toward a neig
 keeps the privacy footprint at "was there voice activity", never "what was said". Until then,
 `enabled: false` per room is a legitimate choice for rooms where the noise is not worth it.
 
+## AI second opinion (local vision model)
+
+A vision-language model is too slow to watch every frame, but it is much better than rules at
+judging a clip: fight or horseplay, sleeping or reading. So it runs as a second stage on each
+saved clip (`classroom_monitor/verify/ollama.py`): six frames around the trigger are tiled into
+one contact sheet with their time offsets, sent to Ollama with the behavior's definition of
+real vs. false alarm, and the model returns `likely_real | likely_false_alarm | unclear`, a
+confidence, and a one-sentence reason. That lands on the alert (`ai_verdict`, `ai_confidence`,
+`ai_summary`, `ai_reason`) and is shown to the reviewer as advisory. It never changes status.
+
+```bash
+ollama pull qwen3-vl:8b          # ~6 GB at Q4, ~1 s per clip on a 4060 Ti 16 GB
+# config/system.yaml -> verifier.enabled: true
+```
+
+The demo page can call the same model from the browser: enable it in the "AI second opinion"
+panel and start Ollama with `OLLAMA_ORIGINS=https://ahmedps520-svg.github.io` so it accepts
+requests from that page. `POST /api/alerts/{id}/verify` re-runs it on the backend from the
+saved clip. Qwen3-VL 32B or Gemma 3 27B also work (set `verifier.model`); they spill into
+system RAM on a 16 GB card and take several seconds per clip, which is fine at alert rates.
+
 ## Alert lifecycle and the mandatory human step
 
 ```
@@ -187,6 +208,8 @@ merge into the open alert (bumping `occurrences`); after review the same key is 
 | POST | `/api/alerts/{id}/ack` | header `X-Staff-Id` required |
 | POST | `/api/alerts/{id}/review` | body `{outcome: confirm|dismiss, notes}`, header `X-Staff-Id` |
 | GET | `/api/clips/{id}` | clip index (frames + offsets) or mp4 link |
+| GET | `/api/verifier` | AI verifier status: reachable, model pulled |
+| POST | `/api/alerts/{id}/verify` | run the AI second opinion on the saved clip now |
 | WS | `/ws` | `alert.new` / `alert.updated` push |
 
 **Before any real deployment** put the dashboard behind the school's SSO and derive

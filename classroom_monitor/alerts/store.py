@@ -28,7 +28,13 @@ CREATE TABLE IF NOT EXISTS alerts (
     reviewed_at REAL,
     review_notes TEXT NOT NULL DEFAULT '',
     clip_id TEXT,
-    clip_flag TEXT NOT NULL
+    clip_flag TEXT NOT NULL,
+    ai_verdict TEXT,
+    ai_confidence REAL,
+    ai_summary TEXT NOT NULL DEFAULT '',
+    ai_reason TEXT NOT NULL DEFAULT '',
+    ai_model TEXT,
+    ai_at REAL
 );
 CREATE INDEX IF NOT EXISTS alerts_status ON alerts(status);
 CREATE INDEX IF NOT EXISTS alerts_room_ts ON alerts(room_id, first_ts);
@@ -56,6 +62,16 @@ class AlertStore:
         self._lock = threading.RLock()
         with self._lock:
             self._db.executescript(_SCHEMA)
+            self._migrate()
+
+    def _migrate(self) -> None:
+        """Add columns introduced after a database was created."""
+        have = {r["name"] for r in self._db.execute("PRAGMA table_info(alerts)")}
+        for col, ddl in [("ai_verdict", "TEXT"), ("ai_confidence", "REAL"), ("ai_summary", "TEXT NOT NULL DEFAULT ''"),
+                         ("ai_reason", "TEXT NOT NULL DEFAULT ''"), ("ai_model", "TEXT"), ("ai_at", "REAL")]:
+            if col not in have:
+                self._db.execute(f"ALTER TABLE alerts ADD COLUMN {col} {ddl}")
+        self._db.commit()
 
     # ---------------------------------------------------------------- alerts
     def upsert(self, a: Alert) -> None:
@@ -64,7 +80,7 @@ class AlertStore:
                 """INSERT OR REPLACE INTO alerts VALUES
                    (:id,:room_id,:behavior,:track_ids,:score,:confidence,:sustained_s,:first_ts,:last_ts,
                     :evidence,:status,:occurrences,:acknowledged_by,:acknowledged_at,:reviewed_by,:reviewed_at,
-                    :review_notes,:clip_id,:clip_flag)""",
+                    :review_notes,:clip_id,:clip_flag,:ai_verdict,:ai_confidence,:ai_summary,:ai_reason,:ai_model,:ai_at)""",
                 {
                     **a.to_dict(),
                     "track_ids": json.dumps(a.track_ids),

@@ -43,7 +43,8 @@ class RoomStatus:
 
 class RoomPipeline:
     def __init__(self, room: RoomConfig, system: SystemConfig, store: AlertStore, alerts: AlertEngine,
-                 source: FrameSource | None = None, backend: PerceptionBackend | None = None) -> None:
+                 source: FrameSource | None = None, backend: PerceptionBackend | None = None,
+                 verifier=None) -> None:
         self.room = room
         self.system = system
         self.store = store
@@ -53,7 +54,8 @@ class RoomPipeline:
         self.behavior = BehaviorEngine(
             room.id, room.resolved_thresholds(system.default_thresholds), room.seat_zones, system.process_fps,
         )
-        self.clips = ClipWriter(system.clips, store)
+        self.verifier = verifier
+        self.clips = ClipWriter(system.clips, store, on_ready=(verifier.enqueue if verifier else None))
         self.status = RoomStatus(room.id, room.name)
         self._preview: tuple[bytes, str] | None = None
         self._preview_lock = threading.Lock()

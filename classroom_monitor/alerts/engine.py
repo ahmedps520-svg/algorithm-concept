@@ -46,6 +46,10 @@ class AlertEngine:
     def on_alert_updated(self, cb: AlertCallback) -> None:
         self._on_update.append(cb)
 
+    def notify_updated(self, alert: Alert) -> None:
+        """Let subscribers (dashboard) know an alert changed outside the review flow."""
+        self._emit(self._on_update, alert)
+
     def _emit(self, cbs: list[AlertCallback], alert: Alert) -> None:
         for cb in cbs:
             try:

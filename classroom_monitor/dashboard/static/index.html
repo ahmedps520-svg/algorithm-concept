@@ -144,6 +144,7 @@ async function loadQueue() {
     <div class="alert" data-id="${a.id}">
       <div class="row"><b>${nice(a.behavior)}</b> ${badge(a.confidence, a.confidence)} ${badge(a.status, a.status)} <span style="color:var(--muted)">${roomName(a.room_id)}</span></div>
       <div class="meta">${fmt(a.first_ts)} · sustained ${a.sustained_s.toFixed(1)}s · seen ${a.occurrences}× · tracks ${a.track_ids.join(', ')}${a.behavior === 'talking' ? ' · <b>video-only, low confidence</b>' : ''}</div>
+      ${aiLine(a)}
       ${a.status === 'acknowledged' ? `<div class="meta">acknowledged by ${a.acknowledged_by}</div><textarea rows="2" placeholder="Review notes (optional)"></textarea>` : ''}
       <div class="actions">
         ${a.clip_id ? `<button onclick="openClip('${a.clip_id}')">View clip</button>` : '<button disabled>clip pending…</button>'}
@@ -153,6 +154,13 @@ async function loadQueue() {
     </div>`).join('');
 }
 const roomName = id => (rooms.find(r => r.room_id === id) || { name: id }).name;
+const AI = { likely_real: ['confirmed', 'AI: likely real'], likely_false_alarm: ['low', 'AI: likely false alarm'], unclear: ['acknowledged', 'AI: unclear'], error: ['low', 'AI: unavailable'] };
+function aiLine(a) {
+  if (!a.ai_verdict) return a.clip_id ? `<div class="meta">AI second opinion: pending <button class="small" onclick="verify('${a.id}')">run now</button></div>` : '';
+  const [cls, txt] = AI[a.ai_verdict] || ['low', 'AI: ' + a.ai_verdict];
+  return `<div class="meta"><span class="badge b-${cls}">${txt}${a.ai_confidence != null ? ' ' + Math.round(a.ai_confidence * 100) + '%' : ''}</span> ${a.ai_summary || ''}${a.ai_reason ? ' — ' + a.ai_reason : ''} <span style="opacity:.6">(${a.ai_model || ''}; advisory only)</span></div>`;
+}
+async function verify(id) { try { await api(`/api/alerts/${id}/verify`, { method: 'POST' }); await loadQueue(); await loadLog(); } catch (e) { alert(e.message); } }
 async function ack(id) {
   if (!staff()) return alert('Enter your staff ID first.');
   try { await api(`/api/alerts/${id}/ack`, { method: 'POST' }); await loadQueue(); } catch (e) { alert(e.message); }

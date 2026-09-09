@@ -22,16 +22,19 @@ from . import imgcodec
 
 log = logging.getLogger(__name__)
 
+ClipReadyCallback = Callable[[Alert, list[tuple[float, np.ndarray]]], None]
+
 
 class ClipRecorder:
     """Accumulates frames for one clip until post-roll is satisfied, then finalises."""
 
     def __init__(self, cfg: ClipConfig, store: AlertStore, alert: Alert, pre: list[tuple[float, np.ndarray]],
-                 clock: Callable[[], float] = time.time) -> None:
+                 clock: Callable[[], float] = time.time, on_ready: ClipReadyCallback | None = None) -> None:
         self.cfg = cfg
         self.store = store
         self.alert = alert
         self.clock = clock
+        self.on_ready = on_ready
         self.clip_id = uuid.uuid4().hex[:12]
         self.frames: list[tuple[float, np.ndarray]] = list(pre)
         self.trigger_ts = alert.first_ts
@@ -64,6 +67,11 @@ class ClipRecorder:
         start, end = self.frames[0][0], self.frames[-1][0]
         self.store.add_clip(self.clip_id, self.alert.id, self.alert.room_id, path, self.clock(), start, end, len(self.frames))
         log.info("clip %s saved for alert %s (%d frames, %.1fs)", self.clip_id, self.alert.id, len(self.frames), end - start)
+        if self.on_ready is not None:
+            try:
+                self.on_ready(self.alert, list(self.frames))
+            except Exception:  # noqa: BLE001
+                log.exception("clip-ready callback failed for alert %s", self.alert.id)
 
     def _write_image_dir(self, d: Path) -> Path:
         frames_dir = d / "frames"
@@ -95,10 +103,12 @@ class ClipRecorder:
 class ClipWriter:
     """Owns the per-room ring buffer and any in-flight recorders."""
 
-    def __init__(self, cfg: ClipConfig, store: AlertStore, clock: Callable[[], float] = time.time) -> None:
+    def __init__(self, cfg: ClipConfig, store: AlertStore, clock: Callable[[], float] = time.time,
+                 on_ready: ClipReadyCallback | None = None) -> None:
         self.cfg = cfg
         self.store = store
         self.clock = clock
+        self.on_ready = on_ready
         self.ring = FrameRingBuffer(cfg.pre_roll_s, cfg.fps)
         self._active: list[ClipRecorder] = []
         self._lock = threading.Lock()
@@ -116,7 +126,7 @@ class ClipWriter:
             self._active = [r for r in self._active if not r.done]
 
     def start(self, alert: Alert) -> ClipRecorder:
-        rec = ClipRecorder(self.cfg, self.store, alert, self.ring.snapshot(), self.clock)
+        rec = ClipRecorder(self.cfg, self.store, alert, self.ring.snapshot(), self.clock, self.on_ready)
         with self._lock:
             self._active.append(rec)
         return rec

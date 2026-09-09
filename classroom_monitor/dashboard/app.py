@@ -152,6 +152,29 @@ def create_app(ms: MonitorSystem) -> FastAPI:
             raise HTTPException(404, "no video file")
         return FileResponse(f, media_type="video/mp4")
 
+    # ----------------------------------------------------------- verifier
+    @app.get("/api/verifier")
+    def verifier_status() -> dict:
+        if ms.verifier is None:
+            return {"enabled": False}
+        return {"enabled": True, **ms.verifier.health()}
+
+    @app.post("/api/alerts/{alert_id}/verify")
+    def alert_verify(alert_id: str) -> dict:
+        """Run (or re-run) the AI second opinion on a saved clip, synchronously."""
+        if ms.verifier is None:
+            raise HTTPException(409, "verifier is disabled in config")
+        a = ms.store.get(alert_id)
+        if a is None:
+            raise HTTPException(404, "unknown alert")
+        if not a.clip_id:
+            raise HTTPException(409, "clip not saved yet")
+        c = _live_clip(ms, a.clip_id)
+        frames = _load_clip_frames(Path(c["path"]))
+        if not frames:
+            raise HTTPException(409, "clip has no readable frames")
+        return ms.verifier.verify_now(a, frames).to_dict()
+
     # -------------------------------------------------------------- misc
     @app.get("/api/config")
     def config() -> dict:
@@ -171,6 +194,25 @@ def create_app(ms: MonitorSystem) -> FastAPI:
             bus.clients.discard(websocket)
 
     return app
+
+
+def _load_clip_frames(clip_dir: Path) -> list:
+    """Frames of an image-sequence clip as (ts, image) pairs, for on-demand verification."""
+    from ..clips import imgcodec
+
+    idx = clip_dir / "index.json"
+    if not idx.exists():
+        return []
+    meta = json.loads(idx.read_text())
+    out = []
+    for f in meta.get("frames", []):
+        p = clip_dir / f["file"]
+        if p.is_file():
+            try:
+                out.append((f["ts"], imgcodec.decode(p.read_bytes())))
+            except ValueError:
+                continue
+    return out
 
 
 def _live_clip(ms: MonitorSystem, clip_id: str) -> dict:

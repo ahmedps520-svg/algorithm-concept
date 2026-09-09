@@ -11,6 +11,7 @@ from ..alerts.engine import AlertEngine
 from ..alerts.store import AlertStore
 from ..clips.retention import RetentionEnforcer
 from ..config import RoomConfig, SystemConfig, load_room_configs, load_system_config
+from ..verify import OllamaVerifier
 from .room import RoomPipeline
 
 log = logging.getLogger(__name__)
@@ -22,12 +23,18 @@ class MonitorSystem:
         self.store = AlertStore(system.storage.sqlite_path)
         self.alerts = AlertEngine(self.store, system.debounce)
         self.retention = RetentionEnforcer(system.retention, self.store)
+        self.verifier: OllamaVerifier | None = (
+            OllamaVerifier(system.verifier, self.store, notify=self.alerts.notify_updated) if system.verifier.enabled else None
+        )
         self.rooms: dict[str, RoomPipeline] = {
-            r.id: RoomPipeline(r, system, self.store, self.alerts) for r in rooms
+            r.id: RoomPipeline(r, system, self.store, self.alerts, verifier=self.verifier) for r in rooms
         }
 
     def start(self) -> None:
         self.retention.start()
+        if self.verifier:
+            self.verifier.start()
+            log.info("clip verifier: %s at %s -> %s", self.system.verifier.model, self.system.verifier.base_url, self.verifier.health())
         for p in self.rooms.values():
             p.start()
             log.info("started room %s (%s) <- %s", p.room.id, p.room.name, p.room.camera.url)
@@ -35,6 +42,8 @@ class MonitorSystem:
     def stop(self) -> None:
         for p in self.rooms.values():
             p.stop()
+        if self.verifier:
+            self.verifier.stop()
         self.retention.stop()
         self.store.close()
 

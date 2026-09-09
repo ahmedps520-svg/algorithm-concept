@@ -60,6 +60,13 @@ class Alert:
     review_notes: str = ""
     clip_id: str | None = None
     clip_flag: ClipFlag = ClipFlag.UNREVIEWED
+    # AI second opinion from the clip verifier (advisory only; a human still decides).
+    ai_verdict: str | None = None        # likely_real | likely_false_alarm | unclear | error
+    ai_confidence: float | None = None
+    ai_summary: str = ""                 # what the model says is happening
+    ai_reason: str = ""
+    ai_model: str | None = None
+    ai_at: float | None = None
 
     def to_dict(self) -> dict:
         d = asdict(self)
