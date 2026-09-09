@@ -33,6 +33,7 @@ class Observation:
     shoulder_w: float | None = None    # normalised shoulder width
     head_motion: float = 0.0           # nose displacement, shoulder widths per second
     eyes_visible: bool = False         # both eye keypoints confidently detected
+    mouth: float | None = None         # lip opening 0-1 from a face-landmark stream, if any
     rel_drop: float | None = None      # 1 - head_height / this track's upright baseline
 
 

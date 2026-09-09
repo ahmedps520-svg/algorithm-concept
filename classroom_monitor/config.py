@@ -48,23 +48,24 @@ class FightingThresholds(BaseModel):
 
 
 class SleepingThresholds(BaseModel):
-    """Head down AND still, sustained. "Head down" is any of three cues so it works from a
-    high ceiling camera and from a near eye-level one:
-      * nose below the shoulder line (absolute)
-      * nose-to-shoulder height collapsed versus this person's own upright baseline
-        (relative; learned over the first seconds of the track)
-      * head tilted onto a hand or shoulder (ear line vs horizontal)
+    """Head DOWN and still, sustained.
+
+    "Down" is deliberately strict, because looking at a desk, a page or a phone tips the face
+    without bringing the head down. Only two postures count:
+      * the nose is well below the shoulder line (``fully_down_ratio``), i.e. the head is
+        resting on the desk or on folded arms; or
+      * the face has gone from view and the head is at least at shoulder level
+        (``face_hidden_ratio``), i.e. the head is buried in the arms.
+    Head tilt and a drop against the person's own upright baseline are no longer triggers on
+    their own: they fired on anyone who leaned in or glanced down. The baseline is still used
+    for the awake veto below.
     """
 
     enabled: bool = True
-    # Head (nose) must sit below the shoulder line by this fraction of torso height.
-    head_below_shoulders_ratio: float = 0.15
-    # Or: head height (nose above shoulders, in shoulder widths) dropped by this fraction of baseline.
-    relative_drop: float = 0.45
-    # Or: ear line tilted at least this many degrees from horizontal.
-    tilt_deg: float = 40.0
-    # The relative and tilt cues only count once the nose has come down to about shoulder level.
-    min_drop_for_relative: float = -0.10
+    # Nose below the shoulder line by this fraction of torso height: head is properly down.
+    fully_down_ratio: float = 0.45
+    # With the face not visible, this much drop is enough (head buried in arms).
+    face_hidden_ratio: float = 0.15
     # Awake veto: both eyes plainly visible with the head at its normal height is someone
     # looking at the room, whatever the other cues say.
     awake_relative_drop: float = 0.25
@@ -74,7 +75,6 @@ class SleepingThresholds(BaseModel):
     max_motion: float = 0.3
     # Mean nose motion over the last second (shoulder widths/s) below this counts as still.
     max_head_motion: float = 0.6
-    # Must hold for this long.
     min_duration_s: float = 20.0
     window_s: float = 25.0
     min_active_fraction: float = 0.85
@@ -94,26 +94,26 @@ class OutOfSeatThresholds(BaseModel):
 
 
 class TalkingThresholds(BaseModel):
-    """Video-only talking detection is LOW CONFIDENCE at classroom distances.
+    """Talking from video alone is not reliable enough to act on, so this is OFF by default.
 
-    At 540p from a ceiling camera a student's mouth is a handful of pixels, so lip motion is
-    not resolvable; the only usable cue is repeated head turning toward a neighbour. Events are
-    therefore hard-capped at ``max_confidence`` and can never reach HIGH, never flag a clip on
-    their own, and are meant as a nudge for a staff member to look, nothing more. Pair with a
-    per-room audio level channel before treating them as meaningful."""
+    Head turning is not evidence: people turn their heads constantly. When switched on, an
+    event needs a neighbour within reach AND visible lip movement, which only resolves close
+    to the camera and not at classroom distance from a ceiling mount. Making this meaningful
+    needs a per-room audio channel (voice activity only, no speech recognition); see the
+    README. Events stay hard-capped at ``max_confidence`` and are never evidence on their own.
+    """
 
-    enabled: bool = True
-    # Head-yaw change (normalised nose-to-ear asymmetry) above this suggests turning to a neighbour.
-    head_turn_delta: float = 0.12
+    enabled: bool = False
     proximity_box_widths: float = 0.8
-    # Require a neighbour within reach. True for classrooms (talking needs someone to talk to);
-    # set False only for single-person testing, where it degrades to "repeated head turning".
+    # Require a neighbour within reach. Talking needs someone to talk to.
     require_neighbour: bool = True
+    # Lip opening must vary by at least this much and cross its midpoint this often per window.
+    mouth_range: float = 0.10
+    mouth_crossings: int = 3
     min_duration_s: float = 5.0
     window_s: float = 8.0
     min_active_fraction: float = 0.5
-    # Hard cap: talking events can never exceed this confidence from video alone.
-    max_confidence: float = 0.35
+    max_confidence: float = 0.4
 
 
 class LearnedThresholds(BaseModel):

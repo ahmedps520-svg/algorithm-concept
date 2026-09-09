@@ -1,7 +1,7 @@
 """Drive the BehaviorEngine with the synthetic source (stub perception) and assert which
 behaviors fire, when, and for whom."""
 from classroom_monitor.behavior import Behavior, BehaviorEngine
-from classroom_monitor.config import BehaviorThresholds, SeatZone, TalkingThresholds
+from classroom_monitor.config import BehaviorThresholds, RoomConfig, SeatZone, TalkingThresholds
 from classroom_monitor.ingestion.scenarios import SEATS, seated_actors
 from classroom_monitor.ingestion.source import Actor, SyntheticSource
 from classroom_monitor.perception.backend import StubBackend
@@ -89,61 +89,26 @@ def test_walking_past_seated_students_does_not_fire_fighting():
     assert first(run(actors, script, 30), Behavior.FIGHTING) is None
 
 
-def test_head_down_and_still_fires_sleeping():
+def test_looking_down_does_not_fire_sleeping():
+    """The reported false positive: glancing down at a desk or page tips the face but does not
+    bring the head down, and the eyes stay visible. That must never read as sleeping."""
     def script(t, a):
         if t >= 2:
-            a[3].head_drop, a[3].jitter = 1.0, 0.0005
-    th = BehaviorThresholds()
-    hit = first(run(seated_actors(), script, 40, th), Behavior.SLEEPING)
-    assert hit is not None
-    ts, ev = hit
-    assert abs(ts - (2 + th.sleeping.min_duration_s)) < 2.0   # the baseline cue can fire a little before the absolute one
-    assert ev.track_ids == [4]
+            a[3].head_drop, a[3].jitter = 0.55, 0.0005     # nose dips toward, but not past, the shoulders
+    assert first(run(seated_actors(), script, 45), Behavior.SLEEPING) is None
 
 
-def test_head_slumping_toward_shoulders_fires_sleeping_via_baseline():
-    """Eye-level webcam: the nose never goes below the shoulder line, but the head height
-    collapses to ~45 % of this person's own upright baseline."""
+def test_head_fully_down_fires_sleeping():
     def script(t, a):
-        if t >= 6:
-            a[3].head_drop, a[3].jitter = 0.5, 0.0005      # nose ends level with the shoulders, not below them
+        if t >= 2:
+            a[3].head_drop, a[3].jitter = 1.0, 0.0005     # head resting down on the desk
     th = BehaviorThresholds()
     hit = first(run(seated_actors(), script, 45, th), Behavior.SLEEPING)
     assert hit is not None
     ts, ev = hit
-    assert ev.evidence["cue"] == "head dropped vs own baseline"
-    assert ev.evidence["head_drop"] < th.sleeping.head_below_shoulders_ratio
-    assert abs(ts - (6 + th.sleeping.min_duration_s)) < 1.5
-
-
-def test_upright_person_shifting_posture_never_fires_sleeping():
-    """The user-reported false positive: sitting still, facing the camera, head above the
-    shoulders the whole time, but leaning in and out so head height varies a lot. The relative
-    cue must not fire while the nose is still well above shoulder level."""
-    def script(t, a):
-        a[3].head_drop = 0.30 if int(t) % 6 < 3 else 0.0     # leans in and back, never head-down
-    events = run(seated_actors(), script, 60)
-    assert first(events, Behavior.SLEEPING) is None
-
-
-def test_eyes_visible_at_normal_height_vetoes_sleeping():
-    from classroom_monitor.behavior.features import Observation, TrackState
-    from classroom_monitor.behavior.classifiers import SleepingClassifier
-    from classroom_monitor.config import SleepingThresholds
-
-    t = SleepingThresholds(min_duration_s=1.0, window_s=5.0)
-    clf = SleepingClassifier(t, fps=10)
-    st = TrackState(1, 5.0)
-    fired = False
-    for i in range(60):
-        o = Observation(i / 10, 0.5, 0.5, 0.1, 0.3, 0.5, 0.65, motion=0.0, vx=0, vy=0,
-                        head_drop=0.4, arms_up=False, head_yaw=0.0, pose_available=True,
-                        head_height=0.1, head_tilt=50.0, nose=(0.5, 0.3), shoulder_w=0.08,
-                        eyes_visible=True)
-        o.rel_drop = 0.05                       # head at its normal height
-        st.push(o)
-        fired |= clf.evaluate(st, [], o.ts) is not None
-    assert not fired, "eyes visible at normal head height must veto sleeping"
+    assert ev.evidence["cue"] == "head down below the shoulder line"
+    assert ev.evidence["head_drop"] >= th.sleeping.fully_down_ratio
+    assert abs(ts - (2 + th.sleeping.min_duration_s)) < 1.5
 
 
 def test_head_down_but_fidgeting_does_not_fire_sleeping():
@@ -172,27 +137,58 @@ def test_person_never_seated_is_not_out_of_seat():
     assert first(run(actors, lambda t, a: None, 40), Behavior.OUT_OF_SEAT) is None
 
 
-def test_talking_requires_a_neighbour_and_is_capped_low():
-    """Talking is on but deliberately weak: it needs someone to talk to, and can never exceed
-    LOW confidence from video alone."""
-    def turning(t, a):
-        a[0].head_yaw_drive = t          # unused by the source; yaw comes from geometry below
-        a[0].x = 0.15 + (0.01 if int(t * 10) % 4 < 2 else -0.01)
+def _talk_events(mouth_at, *, neighbour, enabled=True, seconds=20, fps=10):
+    """Drive TalkingClassifier directly: the synthetic source has no face-landmark stream, and
+    lip opening is the only cue talking accepts."""
+    from classroom_monitor.behavior.classifiers import TalkingClassifier
+    from classroom_monitor.behavior.features import Observation, TrackState
+    from classroom_monitor.config import TalkingThresholds
 
-    th = BehaviorThresholds(talking=TalkingThresholds(head_turn_delta=0.0, min_duration_s=2))
-    events = run(seated_actors(), turning, 30, th)
-    talking = [ev for _, ev in events if ev.behavior is Behavior.TALKING]
-    assert talking, "a head-turning student next to neighbours should produce talking events"
-    assert all(ev.score <= th.talking.max_confidence for ev in talking)
-    assert all(ev.confidence.value == "low" for ev in talking)
-    assert all(ev.evidence["neighbour"] is not None for ev in talking)
+    t = TalkingThresholds(enabled=enabled, min_duration_s=2.0)
+    clf = TalkingClassifier(t, fps)
+    me, other = TrackState(1, 10.0), TrackState(2, 10.0)
+    out = []
+    for i in range(seconds * fps):
+        ts = i / fps
+        def obs(cx, mouth):
+            return Observation(ts, cx, 0.5, 0.1, 0.3, cx, 0.65, motion=0.0, vx=0, vy=0, head_drop=-0.3,
+                               arms_up=False, head_yaw=0.0, pose_available=True, mouth=mouth)
+        me.push(obs(0.40, mouth_at(ts)))
+        other.push(obs(0.46 if neighbour else 0.95, None))
+        ev = clf.evaluate(me, [other], ts)
+        if ev is not None:
+            out.append(ev)
+    return out
 
-    # Alone in frame: no neighbour, so no talking event however much they turn.
-    alone = [Actor(id=1, x=0.15, y=0.48, jitter=0.002)]
-    th2 = BehaviorThresholds(talking=TalkingThresholds(head_turn_delta=0.0, min_duration_s=2))
-    assert first(run(alone, turning, 30, th2, zones=[]), Behavior.TALKING) is None
+
+def test_talking_is_off_by_default():
+    from classroom_monitor.config import TalkingThresholds
+    assert TalkingThresholds().enabled is False
+    assert BehaviorThresholds().talking.enabled is False
+    assert not _talk_events(lambda ts: 0.3 if int(ts * 4) % 2 else 0.0, neighbour=True, enabled=False)
 
 
-def test_talking_can_be_disabled_per_room():
-    th = BehaviorThresholds(talking=TalkingThresholds(enabled=False, head_turn_delta=0.0, min_duration_s=2))
-    assert first(run(seated_actors(), lambda t, a: None, 30, th), Behavior.TALKING) is None
+def test_talking_ignores_head_turning_without_lip_movement():
+    """Head turning is not a cue any more: it fired on anyone who looked around."""
+    assert not _talk_events(lambda ts: 0.05, neighbour=True)          # mouth barely moves
+    assert not _talk_events(lambda ts: None, neighbour=True)          # no face-landmark stream at all
+
+
+def test_talking_needs_lip_movement_and_a_neighbour_and_stays_low():
+    speaking = lambda ts: 0.30 if int(ts * 4) % 2 else 0.02
+    events = _talk_events(speaking, neighbour=True)
+    assert events, "lip movement next to a neighbour should produce talking events"
+    th = events[0]
+    assert th.evidence["cue"] == "lip movement with a neighbour in reach"
+    from classroom_monitor.config import TalkingThresholds
+    cap = TalkingThresholds().max_confidence
+    assert all(e.score <= cap for e in events)
+    assert all(e.confidence.value == "low" for e in events)
+    assert not _talk_events(speaking, neighbour=False), "nobody to talk to means no talking event"
+
+
+def test_talking_can_be_enabled_per_room():
+    from classroom_monitor.config import TalkingThresholds
+    room = RoomConfig(id="x", name="x", camera={"url": "synthetic"}, thresholds={"talking": {"enabled": True}})
+    assert room.resolved_thresholds(BehaviorThresholds()).talking.enabled is True
+    assert BehaviorThresholds().talking.enabled is False

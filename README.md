@@ -109,12 +109,21 @@ Two layers run side by side and feed the same alert keys (so they merge, never d
 * **Learned** (`behavior/learned.py`): 2-second windows of 12 per-frame cues (head drop,
   head height vs. this person's own upright baseline, tilt, yaw, torso motion, head motion,
   arm raise, lip movement, in-zone, nearest-neighbour gap, partner motion, pose present),
-  summarised as mean/std/min/max, into class-weighted softmax regression. Trained on examples
-  recorded in the demo (or exported from it) with `scripts/train_behavior.py`. The model's
-  prediction also sits behind a sustained gate, so a single confident frame never alerts.
+  summarised as mean/std/min/max into 48 features, then class-weighted softmax regression or a
+  one-hidden-layer tanh network. Which shape is used is decided by stratified k-fold
+  cross-validation over a grid of shapes, strengths and augmentation levels, not by hand. The
+  model's prediction also sits behind a sustained gate, so a single confident frame never alerts.
 
-Neither layer is, or can be, "perfect": that is why every alert goes to a human for review.
-More recorded examples, from more people and camera angles, is what moves accuracy.
+Training happens where the data is. The demo records labelled 2-second windows from your own
+camera (pose numbers only, never video), searches the grid after every recording, and reports
+a cross-validated accuracy. "Train harder" searches more rounds; "keep searching" runs
+indefinitely, keeping the best model found. Export the examples and
+`python scripts/train_behavior.py export.json --search -o data/behavior_model.json` fits the
+same grid for the backend.
+
+More epochs stop helping quickly on a small set. What moves accuracy is more recordings, from
+more people, at more camera angles and distances. Neither layer is, or can be, "perfect": that
+is why every alert goes to a human for review.
 
 All classifiers feed a per-frame boolean into a `SustainedCondition` gate
 (`behavior/sustain.py`). The gate opens only when the condition has held for
@@ -124,7 +133,7 @@ A single frame can never open it.
 | Behavior | Per-frame cue | Default gate | Notes |
 |---|---|---|---|
 | **fighting** | weighted sum of: motion spike (0.3), another person within reach (0.2), *relative* velocity between the two (0.3), sustained arm raise (0.2); frame active at ≥ 0.6 | 3 s, 60 % of a 4 s window | Motion+proximity alone (0.5) never crosses the threshold, so two students walking together score nothing; relative velocity is a *difference*, so shared motion cancels. Event carries both track ids. |
-| **sleeping** | nose below shoulder line by ≥ 15 % of torso height, and mean motion over the last second below 0.3 box-widths/s | 20 s, 85 % of 25 s | Frames without a pose neither count for nor against. |
+| **sleeping** | head actually DOWN: nose well below the shoulder line, or the face gone from view with the head at shoulder level; plus low torso and head motion | 20 s, 85 % of 25 s | Looking down at a desk or page is not sleeping, so head tilt and a drop against the person's own baseline are not triggers on their own. Both eyes plainly visible at normal head height vetoes it outright. |
 | **out_of_seat** | foot point outside every seat zone (+ margin) | 8 s, 80 % of 10 s | Only fires for people first seen *inside* a zone (`require_home_zone`), so the teacher and visitors never trigger. |
 | **talking** | repeated head turning (yaw change vs. the previous frame and a 2 s baseline) with a neighbour within reach | 5 s, 50 % of 8 s | **On, but deliberately weak.** Hard-capped at LOW confidence (`max_confidence: 0.35`), so it can never reach HIGH and never carries a clip on its own. `require_neighbour: false` degrades it to plain head turning; only useful for single-person testing. |
 

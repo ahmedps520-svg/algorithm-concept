@@ -155,26 +155,18 @@ class SleepingClassifier:
         still = mean_motion <= self.t.max_motion and mean_head <= self.t.max_head_motion
         awake = cur.eyes_visible and (cur.rel_drop < self.t.awake_relative_drop if cur.rel_drop is not None
                                       else cur.head_drop <= self.t.awake_head_drop)
-        near_shoulders = cur.head_drop >= self.t.min_drop_for_relative
-        down_abs = cur.head_drop >= self.t.head_below_shoulders_ratio
-        down_rel = near_shoulders and cur.rel_drop is not None and cur.rel_drop >= self.t.relative_drop
-        tilted = near_shoulders and cur.head_tilt is not None and abs(cur.head_tilt) >= self.t.tilt_deg
-        res = self.gate.update(ts, (not awake) and (down_abs or down_rel or tilted) and still)
+        fully_down = cur.head_drop >= self.t.fully_down_ratio
+        face_hidden = not cur.eyes_visible and cur.head_drop >= self.t.face_hidden_ratio
+        res = self.gate.update(ts, (not awake) and (fully_down or face_hidden) and still)
         if not res.triggered:
             return None
-        if down_abs:
-            cue, depth = "nose below shoulders", min(1.0, cur.head_drop / max(self.t.head_below_shoulders_ratio * 3, 1e-3))
-        elif down_rel:
-            cue, depth = "head dropped vs own baseline", min(1.0, cur.rel_drop / 0.7)
-        else:
-            cue, depth = "head tilted onto hand/shoulder", 0.6
-        conf = min(1.0, 0.4 + 0.3 * res.active_fraction + 0.3 * depth)
+        cue = "head down below the shoulder line" if fully_down else "face not visible, head at shoulder level"
+        depth = min(1.0, (cur.head_drop - self.t.face_hidden_ratio) / 0.5)
+        conf = min(1.0, 0.5 + 0.25 * res.active_fraction + 0.25 * depth)
         return BehaviorEvent(
             room_id="", behavior=self.behavior, track_ids=[me.track_id], ts=ts, score=conf,
             sustained_s=res.sustained_s,
             evidence={"cue": cue, "head_drop": round(cur.head_drop, 2),
-                      "rel_drop": None if cur.rel_drop is None else round(cur.rel_drop, 2),
-                      "tilt_deg": None if cur.head_tilt is None else round(cur.head_tilt),
                       "motion": round(mean_motion, 3), "active_fraction": round(res.active_fraction, 2)},
         )
 
@@ -223,16 +215,18 @@ class OutOfSeatClassifier:
 # Talking (LOW CONFIDENCE from video)
 # --------------------------------------------------------------------------------------
 class TalkingClassifier:
-    """Video-only proxy: repeated head turns toward a neighbour. At classroom camera distance
-    lip motion is not resolvable, so this is capped at LOW confidence and is off by default.
-    Pair with a per-room audio level channel before trusting it."""
+    """Off by default. When enabled, needs a neighbour within reach and visible lip movement.
+
+    Head turning is deliberately not a cue: it fires on anyone who looks around. Lip movement
+    needs a face-landmark stream (``Observation.mouth``); without one this never fires, which
+    is the honest outcome for a ceiling camera at classroom distance."""
 
     behavior = Behavior.TALKING
 
     def __init__(self, t: TalkingThresholds, fps: float) -> None:
         self.t = t
         self.gate = SustainedCondition(t.window_s, t.min_duration_s, t.min_active_fraction)
-        self._yaws: deque[float] = deque(maxlen=max(2, int(2.0 * fps)))
+        self._mouths: list[tuple[float, float]] = []
 
     def evaluate(self, me: TrackState, others: list[TrackState], ts: float) -> BehaviorEvent | None:
         if not self.t.enabled or me.latest is None:
@@ -240,30 +234,30 @@ class TalkingClassifier:
         cur = me.latest
         partner, gap = _nearest(cur, others)
         near = partner is not None and gap <= self.t.proximity_box_widths
-        if self.t.require_neighbour and not near:
-            self.gate.update(ts, False)
-            return None
 
-        turned = False
-        if cur.head_yaw is not None:
-            if self._yaws:
-                # Compare against the recent baseline as well as the previous frame, so a slow
-                # turn away from "facing forward" counts, not only a fast one.
-                baseline = sum(self._yaws) / len(self._yaws)
-                turned = (abs(cur.head_yaw - self._yaws[-1]) >= self.t.head_turn_delta
-                          or abs(cur.head_yaw - baseline) >= self.t.head_turn_delta)
-            self._yaws.append(cur.head_yaw)
+        mouth_active, mouth_range = False, None
+        if cur.mouth is not None:
+            self._mouths.append((ts, cur.mouth))
+            self._mouths = [m for m in self._mouths if ts - m[0] <= 1.5]
+            if len(self._mouths) >= 8:
+                v = [m[1] for m in self._mouths]
+                lo, hi = min(v), max(v)
+                mid = (lo + hi) / 2
+                mouth_range = hi - lo
+                crossings = sum(1 for a, b in zip(v, v[1:]) if (a < mid) != (b < mid))
+                mouth_active = mouth_range >= self.t.mouth_range and crossings >= self.t.mouth_crossings
 
-        res = self.gate.update(ts, turned)
+        res = self.gate.update(ts, mouth_active and (near or not self.t.require_neighbour))
         if not res.triggered:
             return None
-        conf = min(self.t.max_confidence, 0.2 + 0.2 * res.active_fraction)   # hard cap
+        conf = min(self.t.max_confidence, 0.25 + 0.2 * res.active_fraction)
         return BehaviorEvent(
             room_id="", behavior=self.behavior, track_ids=[me.track_id], ts=ts, score=conf,
             sustained_s=res.sustained_s,
-            evidence={"note": "video-only cue (head turning); low confidence by design, add audio to confirm",
-                      "neighbour": partner.track_id if near else None,
-                      "active_fraction": round(res.active_fraction, 2)},
+            evidence={"cue": "lip movement with a neighbour in reach",
+                      "mouth_range": None if mouth_range is None else round(mouth_range, 2),
+                      "neighbour": partner.track_id if partner else None,
+                      "note": "video-only; audio would confirm"},
         )
 
 

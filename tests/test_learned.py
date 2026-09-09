@@ -2,7 +2,7 @@ import json
 
 import numpy as np
 
-from classroom_monitor.behavior.learned import FEAT_NAMES, LABELS, SoftmaxModel, frame_features, train, window_features
+from classroom_monitor.behavior.learned import FEAT_NAMES, LABELS, MLPModel, SoftmaxModel, frame_features, load_model, train, window_features
 from classroom_monitor.behavior import Behavior, BehaviorEngine
 from classroom_monitor.config import BehaviorThresholds, LearnedThresholds
 from classroom_monitor.ingestion.scenarios import seated_actors
@@ -45,6 +45,50 @@ def test_train_predict_roundtrip(tmp_path):
     assert acc > 0.95
     m2 = SoftmaxModel.from_json(json.loads(json.dumps(m.to_json())))
     assert m2.predict(X[3])[0] == m.predict(X[3])[0]
+
+
+def test_mlp_learns_a_boundary_a_linear_model_cannot(tmp_path):
+    """XOR-ish split: proof the hidden layer is actually doing something."""
+    rng = np.random.default_rng(3)
+    X, y = [], []
+    for _ in range(200):
+        a, b = rng.uniform(-1, 1, 2)
+        X.append([a, b] + list(rng.normal(0, 0.05, 4)))
+        y.append("sleeping" if (a > 0) != (b > 0) else "normal")
+    X = np.asarray(X)
+    labels = ["normal", "sleeping"]
+    lin = train(X[::2], y[::2], labels, hidden=0, epochs=600)
+    net = train(X[::2], y[::2], labels, hidden=16, epochs=1500, lr=0.3, seed=1)
+    acc = lambda m: np.mean([m.predict(x)[0] == l for x, l in zip(X[1::2], y[1::2])])
+    assert acc(lin) < 0.7 < acc(net)
+    assert isinstance(net, MLPModel) and isinstance(lin, SoftmaxModel)
+
+
+def test_both_model_shapes_round_trip_through_json(tmp_path):
+    rng = np.random.default_rng(4)
+    data = sum((_windows(rng, l, 30) for l in ["normal", "sleeping"]), [])
+    X = np.asarray([x for x, _ in data]); y = [l for _, l in data]
+    for hidden in (0, 12):
+        m = train(X, y, ["normal", "sleeping"], hidden=hidden, epochs=300, seed=2)
+        p = tmp_path / f"m{hidden}.json"
+        p.write_text(json.dumps({"model": m.to_json()}))
+        again = load_model(p)
+        assert type(again) is type(m)
+        assert again.predict(X[5]) == m.predict(X[5])
+    # a file written before the network existed has no "type" and must still load
+    legacy = tmp_path / "legacy.json"
+    lm = train(X, y, ["normal", "sleeping"], epochs=100)
+    d = lm.to_json(); d.pop("type")
+    legacy.write_text(json.dumps(d))
+    assert isinstance(load_model(legacy), SoftmaxModel)
+
+
+def test_augmentation_changes_nothing_about_the_interface():
+    rng = np.random.default_rng(5)
+    data = sum((_windows(rng, l, 25) for l in ["normal", "out_of_seat"]), [])
+    X = np.asarray([x for x, _ in data]); y = [l for _, l in data]
+    m = train(X, y, ["normal", "out_of_seat"], augment=3, epochs=300)
+    assert m.predict(X[0])[0] in ("normal", "out_of_seat")
 
 
 def test_learned_classifier_runs_in_engine_and_merges_with_rules(tmp_path):

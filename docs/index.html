@@ -74,6 +74,7 @@
   <button id="addcam" class="primary">＋ Add camera</button>
   <button id="addsim" title="Adds a scripted synthetic room so you can see all alert types without acting them out">＋ Simulated room</button>
   <select id="preset" title="How long a behavior must last before it alerts"><option value="demo">Demo timing (fast)</option><option value="classroom">Classroom timing</option></select>
+  <label title="Off by default: from video alone this is unreliable. When on it needs a neighbour in reach and visible lip movement."><input type="checkbox" id="talk-on"> detect talking</label>
   <span class="spacer"></span>
   <label>Staff ID <input id="staff" placeholder="e.g. j.smith" style="width:150px" title="Required to acknowledge or review alerts"></label>
 </header>
@@ -82,7 +83,7 @@
     <section>
       <h2>Live rooms <span class="badge b-low" id="roomcount">0 cameras</span><span class="spacer"></span><span class="live-status" id="modelstatus"></span><span class="live-status" id="facestatus"></span></h2>
       <div id="grid" class="grid"></div>
-      <div class="note" id="hint">Click <b>＋ Add camera</b> and allow camera access. Sit still for a few seconds: a seat zone is created around you automatically (or draw one with <b>Draw zone</b>). Progress bars under your box show each behavior building up. Then try: <b>sleeping</b> — put your head down on the desk or slump forward and stay still; <b>out of seat</b> — walk out of your zone; <b>talking</b> — talk normally facing the camera (lip movement) or keep turning to a neighbour; <b>fighting</b> — two people close together, both moving, arms up. Brief movement never alerts.</div>
+      <div class="note" id="hint">Click <b>＋ Add camera</b> and allow camera access. Sit still for a few seconds: a seat zone is created around you automatically (or draw one with <b>Draw zone</b>). Progress bars under your box show each behavior building up. Then try: <b>sleeping</b> — rest your head down on the desk and stay still (just looking down does not count); <b>out of seat</b> — walk out of your zone; <b>fighting</b> — two people close together, both moving, arms up. Brief movement never alerts.</div>
     </section>
     <section>
       <h2>Incident log</h2>
@@ -91,18 +92,20 @@
         <select id="f-room"><option value="">any room</option></select>
         <select id="f-behavior"><option value="">any behavior</option><option value="fighting">fighting</option><option value="sleeping">sleeping</option><option value="out_of_seat">out of seat</option><option value="talking">talking</option></select>
       </div>
-      <div style="overflow:auto"><table><thead><tr><th>Time</th><th>Room</th><th>Behavior</th><th>Conf</th><th>AI opinion</th><th>Status</th><th>Reviewed by</th><th>Clip</th><th>Clip expires</th></tr></thead>
+      <div style="overflow:auto"><table><thead><tr><th>Time</th><th>Room</th><th>Behavior</th><th>Conf</th><th>AI opinion</th><th>Status</th><th>Reviewed by</th><th>Clip</th><th>Clip expires</th><th></th></tr></thead>
       <tbody id="log"></tbody></table></div>
     </section>
     <section id="teach">
       <h2>Teach the classifier <span class="badge b-low" id="modelbadge">rules only</span><span class="spacer"></span><label style="font-weight:400;text-transform:none;letter-spacing:0"><input type="checkbox" id="uselearned" checked> use learned model</label></h2>
-      <div class="note">Record yourself doing each behavior (and "normal" sitting) a few times. Only pose numbers are stored, never video. Then press Train: a classifier is fitted to <b>your</b> examples in the browser and runs alongside the rules. More examples, more people, more angles = better model. Export the set to train the backend with <code>scripts/train_behavior.py</code>.</div>
+      <div class="note">Record yourself doing each behavior (and "normal" sitting) a few times. Only pose numbers are stored, never video. Training runs automatically after each recording: several model shapes are cross-validated on <b>your</b> examples and the best one runs alongside the rules. <b>Train harder</b> searches more; <b>keep searching</b> never stops. More examples, more people, more angles = better model. Export the set to train the backend with <code>scripts/train_behavior.py</code>.</div>
       <div class="filters" style="align-items:center">
         <select id="rec-label"><option value="normal">normal (sitting, working)</option><option value="sleeping">sleeping</option><option value="out_of_seat">out of seat</option><option value="talking">talking</option><option value="fighting">fighting</option></select>
         <button id="rec-btn" class="primary">● Record 6 s</button>
         <span id="rec-status" class="live-status"></span>
         <span class="spacer"></span>
         <button id="train-btn">Train</button>
+        <button id="train-more" title="Search many more model shapes and settings, keeping the best">Train harder</button>
+        <label title="Keep searching for a better model in the background, forever"><input type="checkbox" id="keep-searching"> keep searching</label>
         <button id="export-btn" class="small">Export</button>
         <label class="small" style="cursor:pointer"><button class="small" onclick="this.nextElementSibling.click()">Import</button><input type="file" id="import-file" accept="application/json" style="display:none"></label>
         <button id="reset-btn" class="small danger">Reset</button>
@@ -125,8 +128,8 @@
         <summary>How this works</summary>
         <ol>
           <li>Each camera is a room. Frames go to <b>MoveNet MultiPose</b> (TensorFlow.js) running in your browser: up to 6 people, 17 keypoints each, with a built-in box tracker giving stable ids. In the Python backend this stage is YOLOv8-pose + ByteTrack on an RTSP feed; the classifiers downstream are the same.</li>
-          <li>A second model, MediaPipe Face Landmarker, gives lip movement (jaw-open blendshape) for the talking cue. That only resolves at short range; in a classroom this cue needs an audio channel.</li>
-          <li>Per track, each frame yields cues: torso motion, head motion, a nearby moving partner, relative velocity, sustained arm raise, head down (nose below shoulders, or the head dropped versus this person's own upright baseline, or tilted onto a hand) with an awake-veto when both eyes are plainly visible at normal head height, foot point outside every seat zone, lip movement, head turning.</li>
+          <li>Talking is off by default: from video alone it is not reliable enough to act on. Switched on, it needs a neighbour within reach and visible lip movement from MediaPipe Face Landmarker, which only resolves close to the camera. In a classroom this cue needs an audio channel.</li>
+          <li>Per track, each frame yields cues: torso motion, head motion, a nearby moving partner, relative velocity, sustained arm raise, head down (nose well below the shoulder line, or the face gone from view with the head at shoulder level) with an awake-veto when both eyes are plainly visible at normal head height, foot point outside every seat zone, lip movement, head turning.</li>
           <li>Each behavior sits behind a <b>sustained-condition gate</b> with a minimum duration and a minimum fraction of active frames. Demo timing: fighting 2 s, sleeping 6 s, out of seat 4 s, talking 3 s. Classroom timing: 3 / 20 / 8 / 5 s. A single frame can never alert.</li>
           <li>A seat zone is created automatically around anyone who stays put for a few seconds without one (labelled "auto seat"); you can also draw zones by hand.</li>
           <li>Repeats merge into the open alert; per-track (120 s) and per-room (30 s) cooldowns stop duplicates.</li>
@@ -143,7 +146,9 @@
     </section>
   </div>
   <section>
-    <h2>Alert queue <span id="qcount" class="badge b-new" style="display:none"></span></h2>
+    <h2>Alert queue <span id="qcount" class="badge b-new" style="display:none"></span><span class="spacer"></span>
+      <button class="small" id="clear-queue" title="Remove every alert waiting for review">Clear queue</button>
+      <button class="small danger" id="clear-all" title="Remove every alert and its clip from this page">Clear all</button></h2>
     <div class="note">Alerts are suggestions from an automated detector. A staff member must <b>acknowledge</b> and <b>review</b> each one; nothing is flagged actionable until a person confirms it.</div>
     <div id="queue"></div>
   </section>
@@ -180,15 +185,21 @@ const TH = {
   // Sleeping = head down AND still. Head down is any of: nose below the shoulder line
   // (headDrop), the nose-to-shoulder height collapsing versus this person's own upright
   // baseline (relDrop; works with an eye-level webcam), or the head tilted onto a hand/shoulder.
-  // Sleeping needs the head to actually come DOWN toward the shoulders and stay still. The
-  // relative-drop and tilt cues only count once the nose is near shoulder level (minDrop), and
-  // a face with both eyes plainly visible at normal head height vetoes the whole thing: that
-  // is someone looking at the room, however they are sitting.
-  sleeping: { window: 25, minDur: 12, minFrac: 0.85, headDrop: 0.15, relDrop: 0.45, minDrop: -0.10, tiltDeg: 40, awakeRelDrop: 0.25, awakeHeadDrop: -0.2, maxMotion: 0.3, maxHeadMotion: 0.6 },
+  // Sleeping means the head is DOWN, not merely angled down. Looking at a desk, a phone or a
+  // page tips the face without bringing the head down, so only two postures count:
+  //   * the nose is well below the shoulder line (head resting on the desk or arms), or
+  //   * the face has disappeared and the head is at least at shoulder level (buried in arms).
+  // Both must also be still. Head tilt and head-height drop are no longer triggers on their
+  // own: they fired on anyone who leaned in or glanced down.
+  sleeping: { window: 25, minDur: 12, minFrac: 0.85, fullyDown: 0.45, faceHiddenDrop: 0.15,
+              awakeRelDrop: 0.25, awakeHeadDrop: -0.2, maxMotion: 0.3, maxHeadMotion: 0.6 },
   out_of_seat: { window: 10, minDur: 8, minFrac: 0.8, margin: 0.03, autoSeat: 3, autoSeatMotion: 0.5 },
-  // Talking = lip movement (face landmarks; only resolvable at short range) or repeated head
-  // turning. Yaw-only evidence is capped at LOW confidence; lip evidence may reach MEDIUM.
-  talking: { window: 8, minDur: 5, minFrac: 0.5, headTurn: 0.12, proximity: 0.8, requireNeighbour: false, mouthRange: 0.08, mouthCrossings: 2, maxConfYaw: 0.35, maxConfMouth: 0.6 },
+  // Talking from video alone does not work well enough to trust, so it is OFF by default.
+  // When switched on it needs BOTH a neighbour within reach AND visible lip movement from the
+  // face landmarker; head turning alone is not evidence (people turn their heads constantly).
+  // Reliable talking detection needs an audio channel, which these cameras do not have.
+  talking: { enabled: false, window: 8, minDur: 5, minFrac: 0.5, proximity: 0.8, requireNeighbour: true,
+             mouthRange: 0.10, mouthCrossings: 3, maxConf: 0.4 },
 };
 function applyPreset(name) {
   const p = PRESETS[name] || PRESETS.demo;
@@ -241,7 +252,7 @@ class TrackState {
                    sleeping: new Sustain(TH.sleeping.window, TH.sleeping.minDur, TH.sleeping.minFrac),
                    out_of_seat: new Sustain(TH.out_of_seat.window, TH.out_of_seat.minDur, TH.out_of_seat.minFrac),
                    talking: new Sustain(TH.talking.window, TH.talking.minDur, TH.talking.minFrac) };
-    this.armFrames = 0; this.scores = []; this.partner = null; this.yaws = []; this.mouths = [];
+    this.armFrames = 0; this.scores = []; this.partner = null; this.mouths = []; this.lastMouthRange = null;
     this.headBase = null; this.headBaseN = 0;      // this person's own upright nose-to-shoulder height
     this.stillSince = null; this.progress = {}; this.cues = {};
   }
@@ -305,14 +316,13 @@ class TrackState {
     // Awake veto: both eyes clearly visible and the head at its normal height.
     const awake = cur.eyesVisible && (cur.relDrop != null ? cur.relDrop < TH.sleeping.awakeRelDrop
                                                           : cur.headDrop != null && cur.headDrop <= TH.sleeping.awakeHeadDrop);
-    const nearShoulders = cur.headDrop != null && cur.headDrop >= TH.sleeping.minDrop;
-    const downAbs = cur.headDrop != null && cur.headDrop >= TH.sleeping.headDrop;
-    const downRel = nearShoulders && cur.relDrop != null && cur.relDrop >= TH.sleeping.relDrop;
-    const tilted = nearShoulders && cur.headTilt != null && Math.abs(cur.headTilt) >= TH.sleeping.tiltDeg;
-    const headDown = !awake && (downAbs || downRel || tilted);
+    const fullyDown = cur.headDrop != null && cur.headDrop >= TH.sleeping.fullyDown;
+    const faceHidden = !cur.eyesVisible && cur.headDrop != null && cur.headDrop >= TH.sleeping.faceHiddenDrop;
+    const headDown = !awake && (fullyDown || faceHidden);
     r = this.gates.sleeping.update(ts, headDown && still); prog.sleeping = r;
-    if (r.trig) events.push({ behavior: 'sleeping', tracks: [this.id], score: Math.min(1, 0.4 + 0.3 * r.frac + 0.3 * (downAbs ? 1 : downRel ? Math.min(1, cur.relDrop / 0.7) : 0.6)), sustained: r.sustained,
-                              evidence: { cue: downAbs ? 'nose below shoulders' : downRel ? 'head dropped vs own baseline' : 'head tilted onto hand/shoulder', head_drop: cur.headDrop?.toFixed(2), rel_drop: cur.relDrop?.toFixed(2), tilt_deg: cur.headTilt?.toFixed(0), motion: meanMotion.toFixed(3), active_fraction: r.frac.toFixed(2) } });
+    if (r.trig) events.push({ behavior: 'sleeping', tracks: [this.id], score: Math.min(1, 0.5 + 0.25 * r.frac + 0.25 * Math.min(1, (cur.headDrop - TH.sleeping.faceHiddenDrop) / 0.5)), sustained: r.sustained,
+                              evidence: { cue: fullyDown ? 'head down below the shoulder line' : 'face not visible, head at shoulder level',
+                                          head_drop: cur.headDrop?.toFixed(2), motion: meanMotion.toFixed(3), active_fraction: r.frac.toFixed(2) } });
     // --- out of seat. A seat zone is created automatically around anyone who stays put for a
     //     few seconds and has no zone yet, so the demo works without drawing anything.
     let z = this.zoneAt(cur.fx, cur.fy);
@@ -330,30 +340,24 @@ class TrackState {
       if (r.trig) events.push({ behavior: 'out_of_seat', tracks: [this.id], score: Math.min(1, 0.5 + 0.5 * r.frac), sustained: r.sustained,
                                 evidence: { home_zone: this.homeZone, active_fraction: r.frac.toFixed(2) } });
     }
-    // --- talking: lip movement (face landmarks, short range) or repeated head turns.
-    const nearTalk = cands.some(o => { const p = o.latest;
-      const dx = Math.max(0, Math.abs(cur.cx - p.cx) - (cur.w + p.w) / 2), dy = Math.max(0, Math.abs(cur.cy - p.cy) - (cur.h + p.h) / 2);
-      return Math.hypot(dx, dy) / Math.max(Math.min(cur.w, p.w), 1e-3) <= TH.talking.proximity; });
-    let turned = false, mouthActive = false, mouthRange = null;
-    if (cur.headYaw != null) {
-      if (this.yaws.length) { const base = this.yaws.reduce((a, b) => a + b, 0) / this.yaws.length;
-        turned = Math.abs(cur.headYaw - this.yaws[this.yaws.length - 1]) >= TH.talking.headTurn || Math.abs(cur.headYaw - base) >= TH.talking.headTurn; }
-      this.yaws.push(cur.headYaw); if (this.yaws.length > 20) this.yaws.shift();
-    }
-    if (cur.mouth != null) {
-      this.mouths.push([ts, cur.mouth]); this.mouths = this.mouths.filter(m => ts - m[0] <= 1.5);
-      if (this.mouths.length >= 5) {
-        const v = this.mouths.map(m => m[1]), lo = Math.min(...v), hi = Math.max(...v), mid = (lo + hi) / 2;
-        mouthRange = hi - lo; let cross = 0; for (let i = 1; i < v.length; i++) if ((v[i - 1] < mid) !== (v[i] < mid)) cross++;
-        mouthActive = mouthRange >= TH.talking.mouthRange && cross >= TH.talking.mouthCrossings;
+    // --- talking: only with a neighbour in reach and visible lip movement (see TH.talking).
+    if (TH.talking.enabled) {
+      const nearTalk = cands.some(o => { const p = o.latest;
+        const dx = Math.max(0, Math.abs(cur.cx - p.cx) - (cur.w + p.w) / 2), dy = Math.max(0, Math.abs(cur.cy - p.cy) - (cur.h + p.h) / 2);
+        return Math.hypot(dx, dy) / Math.max(Math.min(cur.w, p.w), 1e-3) <= TH.talking.proximity; });
+      let mouthActive = false, mouthRange = null;
+      if (cur.mouth != null) {
+        this.mouths.push([ts, cur.mouth]); this.mouths = this.mouths.filter(m => ts - m[0] <= 1.5);
+        if (this.mouths.length >= 8) {
+          const v = this.mouths.map(m => m[1]), lo = Math.min(...v), hi = Math.max(...v), mid = (lo + hi) / 2;
+          mouthRange = hi - lo; let cross = 0; for (let i = 1; i < v.length; i++) if ((v[i - 1] < mid) !== (v[i] < mid)) cross++;
+          mouthActive = mouthRange >= TH.talking.mouthRange && cross >= TH.talking.mouthCrossings;
+        }
       }
-    }
-    const talkActive = (mouthActive || turned) && (!TH.talking.requireNeighbour || nearTalk);
-    r = this.gates.talking.update(ts, talkActive); prog.talking = r;
-    if (r.trig) {
-      const withMouth = this.mouths.length >= 5 && mouthActive;
-      events.push({ behavior: 'talking', tracks: [this.id], score: withMouth ? Math.min(TH.talking.maxConfMouth, 0.35 + 0.25 * r.frac) : Math.min(TH.talking.maxConfYaw, 0.2 + 0.2 * r.frac), sustained: r.sustained,
-                    evidence: { cue: withMouth ? 'lip movement' : 'head turning', mouth_range: mouthRange?.toFixed(2), neighbour: nearTalk ? 'yes' : 'none', active_fraction: r.frac.toFixed(2), note: withMouth ? 'video-only; audio would confirm' : 'weak cue; capped at low confidence' } });
+      this.lastMouthRange = mouthRange;
+      r = this.gates.talking.update(ts, mouthActive && (nearTalk || !TH.talking.requireNeighbour)); prog.talking = r;
+      if (r.trig) events.push({ behavior: 'talking', tracks: [this.id], score: Math.min(TH.talking.maxConf, 0.25 + 0.2 * r.frac), sustained: r.sustained,
+                                evidence: { cue: 'lip movement with a neighbour in reach', mouth_range: mouthRange?.toFixed(2), active_fraction: r.frac.toFixed(2), note: 'video-only; audio would confirm' } });
     }
     cur.inZone = !!z; cur.gap = isFinite(gap) ? gap : 3; cur.pMotion = partner ? partner.latest.motion : 0;
     // --- learned model (if trained): sustained high-probability prediction of a behavior
@@ -373,7 +377,7 @@ class TrackState {
       }
     }
     this.progress = prog;
-    this.cues = { motion: meanMotion, headDown, still, mouth: mouthRange, turned, inZone: !!z, homeZone: this.homeZone, learned };
+    this.cues = { motion: meanMotion, headDown, still, mouth: this.lastMouthRange, inZone: !!z, homeZone: this.homeZone, learned };
     return events;
   }
 }
@@ -446,46 +450,125 @@ try { trainSet = JSON.parse(ls.get('train:v2') || '[]'); } catch {}
 try { model = JSON.parse(ls.get('model:v2') || 'null'); } catch {}
 const saveTrain = () => { trainSet = trainSet.slice(-4000); ls.set('train:v2', JSON.stringify(trainSet)); };
 function softmax(z) { const m = Math.max(...z), e = z.map(v => Math.exp(v - m)), s = e.reduce((a, b) => a + b, 0); return e.map(v => v / s); }
+const rng32 = a => () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+const clipz = v => Math.max(-10, Math.min(10, v));
+
+// Two model shapes: plain softmax regression, and a one-hidden-layer tanh network for
+// boundaries a linear model cannot draw. Which one is used is decided by cross-validation,
+// not by hand.
 function predict(m, x) {
-  const z = m.W.map(row => row[0] + x.reduce((a, v, i) => a + row[i + 1] * Math.max(-10, Math.min(10, (v - m.mu[i]) / m.sd[i])), 0));   // clip out-of-range inputs
-  const p = softmax(z); let best = 0; for (let k = 1; k < p.length; k++) if (p[k] > p[best]) best = k;
+  const z = x.map((v, i) => clipz((v - m.mu[i]) / m.sd[i]));
+  let logits;
+  if (m.type === 'mlp') {
+    const h = m.W1.map(row => Math.tanh(row[0] + z.reduce((a, v, i) => a + row[i + 1] * v, 0)));
+    logits = m.W2.map(row => row[0] + h.reduce((a, v, j) => a + row[j + 1] * v, 0));
+  } else {
+    logits = m.W.map(row => row[0] + z.reduce((a, v, i) => a + row[i + 1] * v, 0));
+  }
+  const p = softmax(logits);
+  let best = 0; for (let k = 1; k < p.length; k++) if (p[k] > p[best]) best = k;
   return { label: m.labels[best], prob: p[best], probs: p };
 }
-function trainModel(examples, { epochs = 400, lr = 0.1, l2 = 1e-3 } = {}) {
-  const labels = LEARN.labels, D = examples[0].x.length, K = labels.length;
+function fit(X, Y, K, D, o) {
+  const { hidden = 0, epochs = 600, lr = 0.15, l2 = 1e-3, seed = 1 } = o, rnd = rng32(seed), N = X.length;
+  const counts = new Array(K).fill(0); Y.forEach(y => counts[y]++);
+  const cw = counts.map(c => c ? N / (K * c) : 0);          // class weights: rare behaviors are not drowned
+  if (!hidden) {
+    const W = Array.from({ length: K }, () => new Array(D + 1).fill(0));
+    for (let ep = 0; ep < epochs; ep++) {
+      const G = Array.from({ length: K }, () => new Array(D + 1).fill(0));
+      for (let n = 0; n < N; n++) {
+        const x = X[n], p = softmax(W.map(r => r[0] + x.reduce((a, v, i) => a + r[i + 1] * v, 0)));
+        for (let k = 0; k < K; k++) { const g = (p[k] - (Y[n] === k ? 1 : 0)) * cw[Y[n]]; G[k][0] += g; for (let i = 0; i < D; i++) G[k][i + 1] += g * x[i]; }
+      }
+      for (let k = 0; k < K; k++) for (let i = 0; i <= D; i++) W[k][i] -= lr * (G[k][i] / N + (i ? l2 * W[k][i] : 0));
+    }
+    return { type: 'softmax', W };
+  }
+  const H = hidden;
+  const W1 = Array.from({ length: H }, () => Array.from({ length: D + 1 }, (_, i) => i ? (rnd() * 2 - 1) * Math.sqrt(1 / D) : 0));
+  const W2 = Array.from({ length: K }, () => new Array(H + 1).fill(0));
+  for (let ep = 0; ep < epochs; ep++) {
+    const G1 = Array.from({ length: H }, () => new Array(D + 1).fill(0));
+    const G2 = Array.from({ length: K }, () => new Array(H + 1).fill(0));
+    for (let n = 0; n < N; n++) {
+      const x = X[n], h = new Array(H);
+      for (let j = 0; j < H; j++) h[j] = Math.tanh(W1[j][0] + x.reduce((a, v, i) => a + W1[j][i + 1] * v, 0));
+      const p = softmax(W2.map(r => r[0] + h.reduce((a, v, j) => a + r[j + 1] * v, 0))), w = cw[Y[n]], dh = new Array(H).fill(0);
+      for (let k = 0; k < K; k++) { const g = (p[k] - (Y[n] === k ? 1 : 0)) * w; G2[k][0] += g; for (let j = 0; j < H; j++) { G2[k][j + 1] += g * h[j]; dh[j] += g * W2[k][j + 1]; } }
+      for (let j = 0; j < H; j++) { const d = dh[j] * (1 - h[j] * h[j]); G1[j][0] += d; for (let i = 0; i < D; i++) G1[j][i + 1] += d * x[i]; }
+    }
+    for (let j = 0; j < H; j++) for (let i = 0; i <= D; i++) W1[j][i] -= lr * (G1[j][i] / N + (i ? l2 * W1[j][i] : 0));
+    for (let k = 0; k < K; k++) for (let j = 0; j <= H; j++) W2[k][j] -= lr * (G2[k][j] / N + (j ? l2 * W2[k][j] : 0));
+  }
+  return { type: 'mlp', W1, W2 };
+}
+function buildModel(examples, o = {}) {
+  const labels = LEARN.labels.filter(l => examples.some(e => e.y === l)), D = examples[0].x.length;
   const mu = new Array(D).fill(0), sd = new Array(D).fill(0);
   for (const e of examples) e.x.forEach((v, i) => mu[i] += v / examples.length);
   for (const e of examples) e.x.forEach((v, i) => sd[i] += (v - mu[i]) ** 2 / examples.length);
-  for (let i = 0; i < D; i++) { sd[i] = Math.sqrt(sd[i]); if (sd[i] < 1e-6) sd[i] = 1; }   // effectively constant feature: leave unscaled
-  const X = examples.map(e => e.x.map((v, i) => (v - mu[i]) / sd[i])), Y = examples.map(e => labels.indexOf(e.y));
-  const W = labels.map(() => new Array(D + 1).fill(0));
-  // class weights so a big "normal" set doesn't drown the rare behaviors
-  const counts = labels.map((_, k) => Y.filter(y => y === k).length), cw = counts.map(c => c ? examples.length / (K * c) : 0);
-  for (let ep = 0; ep < epochs; ep++) {
-    const G = labels.map(() => new Array(D + 1).fill(0));
-    for (let n = 0; n < X.length; n++) {
-      const x = X[n], p = softmax(W.map(row => row[0] + x.reduce((a, v, i) => a + row[i + 1] * v, 0)));
-      for (let k = 0; k < K; k++) { const g = (p[k] - (Y[n] === k ? 1 : 0)) * cw[Y[n]]; G[k][0] += g; for (let i = 0; i < D; i++) G[k][i + 1] += g * x[i]; }
-    }
-    for (let k = 0; k < K; k++) for (let i = 0; i <= D; i++) W[k][i] -= lr * (G[k][i] / X.length + (i ? l2 * W[k][i] : 0));
+  for (let i = 0; i < D; i++) { sd[i] = Math.sqrt(sd[i]); if (sd[i] < 1e-6) sd[i] = 1; }
+  const X = [], Y = [], rnd = rng32((o.seed || 1) * 7919);
+  for (const e of examples) {
+    const z = e.x.map((v, i) => clipz((v - mu[i]) / sd[i])), k = labels.indexOf(e.y);
+    X.push(z); Y.push(k);
+    // Augmentation: small jitter copies. With a handful of recordings this is what stops the
+    // model memorising them instead of learning the shape of the behavior.
+    for (let a = 0; a < (o.augment || 0); a++) { X.push(z.map(v => v + (rnd() * 2 - 1) * 0.15)); Y.push(k); }
   }
-  return { labels, mu, sd, W, trainedAt: Date.now(), n: examples.length };
+  return { ...fit(X, Y, labels.length, D, o), labels, mu, sd, n: examples.length,
+           hidden: o.hidden || 0, opts: { hidden: o.hidden || 0, epochs: o.epochs, lr: o.lr, l2: o.l2, augment: o.augment }, trainedAt: Date.now() };
 }
-function trainAndEvaluate() {
-  const byLabel = Object.fromEntries(LEARN.labels.map(l => [l, trainSet.filter(e => e.y === l)]));
-  const present = LEARN.labels.filter(l => byLabel[l].length);
-  if (present.length < 2 || !byLabel.normal.length) return { error: 'Record "normal" plus at least one behavior first.' };
-  // stratified 80/20 hold-out when every present class has at least 5 examples
-  const holdout = present.every(l => byLabel[l].length >= 5);
-  const train = [], test = [];
-  for (const l of present) { const ex = [...byLabel[l]].sort(() => Math.random() - 0.5), cut = holdout ? Math.max(1, Math.floor(ex.length * 0.2)) : 0; test.push(...ex.slice(0, cut)); train.push(...ex.slice(cut)); }
-  const m = trainModel(train);
-  let acc = null, conf = {};
-  if (holdout) { let ok = 0; for (const e of test) { const p = predict(m, e.x).label; conf[e.y] ??= {}; conf[e.y][p] = (conf[e.y][p] || 0) + 1; if (p === e.y) ok++; } acc = ok / test.length; }
-  model = trainModel(trainSet.filter(e => present.includes(e.y)));   // final model on everything
-  model.acc = acc; model.conf = conf; model.perClass = Object.fromEntries(present.map(l => [l, byLabel[l].length]));
-  ls.set('model:v2', JSON.stringify(model));
-  return { acc, conf, n: trainSet.length, holdout };
+// Stratified k-fold: every example is used for testing exactly once, so the score is not a
+// lucky split. With very few examples per class it falls back to leave-one-out.
+function crossVal(examples, o, k = 5) {
+  const labels = LEARN.labels.filter(l => examples.some(e => e.y === l));
+  const rnd = rng32((o.seed || 1) * 104729);
+  const folds = Array.from({ length: k }, () => []);
+  for (const l of labels) {
+    const ex = examples.filter(e => e.y === l).sort(() => rnd() - 0.5);
+    ex.forEach((e, i) => folds[i % k].push(e));
+  }
+  let ok = 0, tot = 0; const conf = {};
+  for (let f = 0; f < k; f++) {
+    const test = folds[f], train = examples.filter(e => !test.includes(e));
+    if (!test.length || new Set(train.map(e => e.y)).size < 2) continue;
+    const m = buildModel(train, o);
+    for (const e of test) { const p = predict(m, e.x).label; conf[e.y] ??= {}; conf[e.y][p] = (conf[e.y][p] || 0) + 1; ok += p === e.y; tot++; }
+  }
+  return { acc: tot ? ok / tot : null, tested: tot, conf };
+}
+// Search over model shapes and strengths instead of trusting one guess. Each config is scored
+// by cross-validation; the winner is refitted on everything.
+const GRID = [
+  { hidden: 0, epochs: 400, lr: 0.15, l2: 1e-3, augment: 0 },
+  { hidden: 0, epochs: 1200, lr: 0.10, l2: 1e-2, augment: 2 },
+  { hidden: 8, epochs: 800, lr: 0.20, l2: 1e-3, augment: 2 },
+  { hidden: 16, epochs: 1200, lr: 0.15, l2: 3e-3, augment: 3 },
+  { hidden: 24, epochs: 1600, lr: 0.10, l2: 1e-2, augment: 4 },
+];
+let searchBest = null, searching = false, searchRounds = 0;
+async function trainBest(rounds = 1, onProgress = () => {}) {
+  for (let r = 0; r < rounds; r++) {
+    searchRounds++;
+    for (let i = 0; i < GRID.length; i++) {
+      const o = { ...GRID[i], seed: searchRounds * 100 + i };
+      onProgress(`round ${searchRounds}, config ${i + 1}/${GRID.length} (${o.hidden ? o.hidden + ' hidden units' : 'linear'})`);
+      await sleep(0);                                   // keep the page responsive while it trains
+      let cv;
+      try { cv = crossVal(trainSet, o); } catch (e) { console.warn('config failed', o, e); continue; }
+      if (cv.acc == null) continue;
+      if (!searchBest || cv.acc > searchBest.acc + 1e-9) searchBest = { acc: cv.acc, conf: cv.conf, tested: cv.tested, opts: o };
+      await sleep(0);
+    }
+  }
+  if (!searchBest) return { error: 'not enough examples to score a model yet.' };
+  model = buildModel(trainSet, searchBest.opts);
+  model.acc = searchBest.acc; model.conf = searchBest.conf; model.tested = searchBest.tested;
+  model.perClass = Object.fromEntries(LEARN.labels.map(l => [l, trainSet.filter(e => e.y === l).length]).filter(([, n]) => n));
+  try { ls.set('model:v2', JSON.stringify(model)); } catch (e) { console.warn('model too large for storage', e); }
+  return { acc: searchBest.acc, conf: searchBest.conf, tested: searchBest.tested, opts: searchBest.opts, rounds: searchRounds };
 }
 function recordWindows(room, ts) {
   if (!rec) return;
@@ -504,29 +587,35 @@ function recordWindows(room, ts) {
   for (const st of room.tracks.values()) { if (ts - st.lastSeen > 0.5) continue; const x = windowFeatures(st, ts); if (x) { trainSet.push({ x: x.map(v => Math.round(v * 1e4) / 1e4), y: rec.label, room: room.kind, t: Date.now() }); rec.n++; } }
   rec.last = ts; $('#rec-status').textContent = `recording ${rec.label}… ${(rec.until - ts).toFixed(0)} s · ${rec.n} windows`; saveTrain();
 }
-function autoTrain() {
-  // Retrain after every recording so the model is always up to date without pressing Train.
+async function runTraining(auto, rounds = 1) {
+  if (searching) return;
   const byLabel = Object.fromEntries(LEARN.labels.map(l => [l, trainSet.filter(e => e.y === l).length]));
-  const behaviors = LEARN.labels.filter(l => l !== 'normal' && byLabel[l]);
-  if (!byLabel.normal || !behaviors.length) {
-    $('#train-result').innerHTML = `<b style="color:var(--ack)">Not trained yet.</b> Need examples of <b>normal</b> and at least one behavior. So far: ${LEARN.labels.filter(l => byLabel[l]).map(l => `${nice(l)} ${byLabel[l]}`).join(', ') || 'none'}. Record "${!byLabel.normal ? 'normal' : 'a behavior'}" next.`;
+  if (!byLabel.normal || !LEARN.labels.some(l => l !== 'normal' && byLabel[l])) {
+    $('#train-result').innerHTML = `<b style="color:var(--ack)">Not trained yet.</b> Need examples of <b>normal</b> and at least one behavior. So far: ${LEARN.labels.filter(l => byLabel[l]).map(l => `${nice(l)} ${byLabel[l]}`).join(', ') || 'none'}.`;
     return;
   }
-  runTraining(true);
-}
-function runTraining(auto) {
+  searching = true; $('#train-btn').disabled = $('#train-more').disabled = true;
+  const t0 = performance.now();
   try {
-    const t0 = performance.now(), r = trainAndEvaluate();
+    const r = await trainBest(rounds, msg => { $('#train-result').innerHTML = `<b>Searching…</b> ${msg}` + (searchBest ? ` · best so far <b>${(searchBest.acc * 100).toFixed(0)}%</b>` : ''); });
     if (r.error) { $('#train-result').innerHTML = `<b style="color:var(--ack)">${r.error}</b>`; return; }
     const confTxt = Object.entries(r.conf).map(([y, row]) => `${nice(y)} → ${Object.entries(row).map(([p, n]) => `${nice(p)} ${n}`).join(', ')}`).join(' · ');
-    $('#train-result').innerHTML = `<b style="color:var(--ok)">${auto ? 'Auto-trained' : 'Trained'}</b> on ${r.n} examples in ${(performance.now() - t0).toFixed(0)} ms. ` + (r.holdout ? `Held-out accuracy <b>${(r.acc * 100).toFixed(0)}%</b> (${confTxt}).` : 'Fewer than 5 examples in some class, so no held-out score yet; record more.') + ' Model saved in this browser and running now; it stays after refresh.';
-    renderTrainCounts(); for (const r of ROOMS) for (const st of r.tracks.values()) st.learnedGates = {};
+    const shape = r.opts.hidden ? `${r.opts.hidden}-unit network` : 'linear model';
+    $('#train-result').innerHTML = `<b style="color:var(--ok)">${auto ? 'Auto-trained' : 'Trained'}</b> on ${trainSet.length} examples in ${((performance.now() - t0) / 1000).toFixed(1)} s over ${r.rounds} search round(s). Best of ${GRID.length * r.rounds} configurations: <b>${shape}</b>, cross-validated accuracy <b>${(r.acc * 100).toFixed(0)}%</b> on ${r.tested} held-out examples (${confTxt}). Saved in this browser and running now.`;
+    renderTrainCounts();
+    for (const room of ROOMS) for (const st of room.tracks.values()) st.learnedGates = {};
   } catch (e) { console.error(e); $('#train-result').innerHTML = `<b style="color:var(--new)">Training failed: ${e.message}</b>`; }
+  finally { searching = false; $('#train-btn').disabled = $('#train-more').disabled = false; }
 }
+function autoTrain() { runTraining(true, 1); }
+// "Keep searching" runs more rounds with fresh seeds for as long as it is ticked, keeping the
+// best model found so far. This is the only kind of "train it longer" that helps: it explores
+// more model shapes against your own recordings.
+setInterval(() => { if ($('#keep-searching')?.checked && !searching && trainSet.length) runTraining(true, 1); }, 3000);
 function renderTrainCounts() {
   const counts = LEARN.labels.map(l => `${nice(l)}: <b>${trainSet.filter(e => e.y === l).length}</b>`).join(' · ');
   $('#train-counts').innerHTML = `Examples (2 s windows): ${counts}`;
-  $('#modelbadge').textContent = model ? `learned model · ${model.n} examples${model.acc != null ? ` · ${(model.acc * 100).toFixed(0)}% held-out` : ''}` : 'rules only';
+  $('#modelbadge').textContent = model ? `${model.hidden ? model.hidden + '-unit net' : 'linear'} · ${model.n} examples${model.acc != null ? ` · ${(model.acc * 100).toFixed(0)}% cross-validated` : ''}` : 'rules only';
   $('#modelbadge').className = 'badge ' + (model ? 'b-confirmed' : 'b-low');
 }
 $('#rec-btn').onclick = () => {
@@ -534,7 +623,8 @@ $('#rec-btn').onclick = () => {
   const label = $('#rec-label').value; let count = 3; $('#rec-status').textContent = `get ready: ${label} in 3…`;
   const iv = setInterval(() => { count--; if (count > 0) $('#rec-status').textContent = `get ready: ${label} in ${count}…`; else { clearInterval(iv); rec = { label, until: now() + 6, last: 0, n: 0 }; $('#rec-status').textContent = `recording ${label}…`; } }, 1000);
 };
-$('#train-btn').onclick = () => runTraining(false);
+$('#train-btn').onclick = () => runTraining(false, 1);
+$('#train-more').onclick = () => runTraining(false, 6);   // a longer search, still seconds not hours
 $('#export-btn').onclick = () => {
   const blob = new Blob([JSON.stringify({ version: 2, features: FEAT_NAMES, window_s: LEARN.windowS, labels: LEARN.labels, examples: trainSet, model }, null, 0)], { type: 'application/json' });
   const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: `classroom-training-${new Date().toISOString().slice(0, 10)}.json` }); a.click();
@@ -552,6 +642,9 @@ $('#reset-btn').onclick = () => { if (!confirm('Delete all recorded examples and
 const ROOMS = [];
 $('#preset').value = ls.get('preset') || 'demo'; applyPreset($('#preset').value);
 $('#preset').onchange = e => { ls.set('preset', e.target.value); applyPreset(e.target.value); };
+TH.talking.enabled = ls.get('talking') === '1';
+$('#talk-on').checked = TH.talking.enabled;
+$('#talk-on').onchange = e => { TH.talking.enabled = e.target.checked; ls.set('talking', e.target.checked ? '1' : '0'); for (const r of ROOMS) r.tracks.clear(); };
 const roomName = id => (ROOMS.find(r => r.id === id) || { name: id }).name;
 const clipCanvas = Object.assign(document.createElement('canvas'), { width: CLIP.w, height: CLIP.h });
 function processFrame(room, dets, ts) {
@@ -804,8 +897,8 @@ async function addCamera(deviceId) {
       }
       for (const id of [...smooth.keys()]) if (!seen.has(id)) smooth.delete(id);
       // draw the box where the person is (centre may be the torso midpoint; box is the body)
-      drawOverlays(room, dets, kps);
-      processFrame(room, dets, ts);
+      try { drawOverlays(room, dets, kps); processFrame(room, dets, ts); }
+      catch (e) { console.error('frame processing failed', e); room.statusEl.textContent = 'error: ' + (e.message || e); }
       // Always hand control back to the browser so the page stays responsive even when the
       // GPU read-back above completes synchronously.
       await sleep(Math.max(16, TARGET_MS - (performance.now() - t0)));
@@ -986,6 +1079,7 @@ function renderQueue() {
         ${a.clip ? `<button onclick="openClip('${a.id}')">View clip</button>` : '<button disabled>clip saving…</button>'}
         ${a.status === 'new' ? `<button class="primary" onclick="ack('${a.id}')">Acknowledge</button>` :
           `<button class="ok" onclick="review('${a.id}','confirm',this)">Confirm concern</button><button class="danger" onclick="review('${a.id}','dismiss',this)">Dismiss</button>`}
+        <button class="small" onclick="clearAlert('${a.id}')" title="Remove this alert without reviewing it">Clear</button>
       </div>
     </div>`).join('');
 }
@@ -997,9 +1091,29 @@ function renderLog() {
       <td>${wall(a.first_ts)}</td><td>${roomName(a.room_id)}</td><td>${nice(a.behavior)}</td>
       <td>${badge(a.confidence, a.confidence)}</td><td>${a.ai_verdict ? badge((AI_BADGE[a.ai_verdict] || ['low'])[0], nice(a.ai_verdict.replace('likely_', '')) + (a.ai_confidence != null ? ' ' + Math.round(a.ai_confidence * 100) + '%' : '')) : '—'}</td><td>${badge(a.status, a.status)}</td>
       <td>${a.reviewed_by || a.acknowledged_by || ''}</td><td>${a.clip ? badge(a.clip_flag === 'actionable' ? 'confirmed' : 'low', a.clip_flag) : 'saving…'}</td><td>${expiry(a)}</td>
-    </tr>`).join('') : '<tr><td colspan="9" class="empty">No incidents yet.</td></tr>';
+      <td><button class="small" onclick="event.stopPropagation(); clearAlert('${a.id}')">Clear</button></td>
+    </tr>`).join('') : '<tr><td colspan="10" class="empty">No incidents yet.</td></tr>';
 }
 ['#f-status', '#f-room', '#f-behavior'].forEach(s => $(s).onchange = renderLog);
+// Clearing removes an alert from this page. It is not a review: nothing is marked actionable
+// or dismissed, and the cooldowns stay in place so the same incident does not re-alert at once.
+function clearAlert(id) {
+  const i = alerts.findIndex(a => a.id === id); if (i < 0) return;
+  const a = alerts[i];
+  openByKey.delete(`${a.room_id}|${a.behavior}|${a.track_ids.join(',')}`);
+  alerts.splice(i, 1); renderQueue(); renderLog();
+}
+function clearAlerts(which) {
+  const gone = alerts.filter(a => which === 'all' || a.status === 'new' || a.status === 'acknowledged');
+  if (!gone.length) return;
+  if (!confirm(`Remove ${gone.length} alert(s) from this page? This does not review them; clips are dropped.`)) return;
+  for (const a of gone) openByKey.delete(`${a.room_id}|${a.behavior}|${a.track_ids.join(',')}`);
+  const keep = alerts.filter(a => !gone.includes(a));
+  alerts.length = 0; alerts.push(...keep);
+  renderQueue(); renderLog();
+}
+$('#clear-queue').onclick = () => clearAlerts('queue');
+$('#clear-all').onclick = () => clearAlerts('all');
 let clip = null, clipTimer = null, clipIdx = 0;
 function openClip(id) {
   const a = alerts.find(x => x.id === id); if (!a?.clip) return; clip = a;

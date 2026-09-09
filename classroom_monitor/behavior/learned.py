@@ -39,28 +39,37 @@ def window_features(frames: list[list[float]]) -> list[float] | None:
     return np.stack([F.mean(0), F.std(0), F.min(0), F.max(0)], axis=1).reshape(-1).tolist()
 
 
+def _softmax(logits: np.ndarray) -> np.ndarray:
+    logits = logits - logits.max(axis=-1, keepdims=True)
+    e = np.exp(logits)
+    return e / e.sum(axis=-1, keepdims=True)
+
+
 @dataclass
-class SoftmaxModel:
+class MLPModel:
+    """One hidden tanh layer. Same JSON contract as SoftmaxModel plus ``type: "mlp"``, so a
+    model trained in the browser search loads here unchanged."""
+
     labels: list[str]
     mu: np.ndarray
     sd: np.ndarray
-    W: np.ndarray            # (K, D+1), column 0 = bias
+    W1: np.ndarray           # (H, D+1), column 0 = bias
+    W2: np.ndarray           # (K, H+1), column 0 = bias
+    type: str = "mlp"
 
     @classmethod
-    def from_json(cls, d: dict) -> "SoftmaxModel":
-        return cls(list(d["labels"]), np.asarray(d["mu"], float), np.asarray(d["sd"], float), np.asarray(d["W"], float))
+    def from_json(cls, d: dict) -> "MLPModel":
+        return cls(list(d["labels"]), np.asarray(d["mu"], float), np.asarray(d["sd"], float),
+                   np.asarray(d["W1"], float), np.asarray(d["W2"], float))
 
     def to_json(self) -> dict:
-        return {"labels": self.labels, "mu": self.mu.tolist(), "sd": self.sd.tolist(), "W": self.W.tolist()}
+        return {"type": "mlp", "labels": self.labels, "mu": self.mu.tolist(), "sd": self.sd.tolist(),
+                "W1": self.W1.tolist(), "W2": self.W2.tolist()}
 
     def predict_proba(self, x: np.ndarray) -> np.ndarray:
-        # Clip standardised inputs: a value far outside the training range should count as
-        # "very high", not overflow the logits.
         z = np.clip((x - self.mu) / self.sd, -10.0, 10.0)
-        logits = self.W[:, 0] + z @ self.W[:, 1:].T
-        logits -= logits.max(axis=-1, keepdims=True)
-        e = np.exp(logits)
-        return e / e.sum(axis=-1, keepdims=True)
+        h = np.tanh(self.W1[:, 0] + z @ self.W1[:, 1:].T)
+        return _softmax(self.W2[:, 0] + h @ self.W2[:, 1:].T)
 
     def predict(self, x: list[float]) -> tuple[str, float]:
         p = self.predict_proba(np.asarray(x, float))
@@ -68,32 +77,86 @@ class SoftmaxModel:
         return self.labels[k], float(p[k])
 
 
-def train(X: np.ndarray, y: list[str], labels: list[str] = LABELS, epochs: int = 400, lr: float = 0.1, l2: float = 1e-3) -> SoftmaxModel:
-    """Class-weighted multinomial logistic regression by full-batch gradient descent."""
+@dataclass
+class SoftmaxModel:
+    labels: list[str]
+    mu: np.ndarray
+    sd: np.ndarray
+    W: np.ndarray            # (K, D+1), column 0 = bias
+    type: str = "softmax"
+
+    @classmethod
+    def from_json(cls, d: dict) -> "SoftmaxModel":
+        return cls(list(d["labels"]), np.asarray(d["mu"], float), np.asarray(d["sd"], float), np.asarray(d["W"], float))
+
+    def to_json(self) -> dict:
+        return {"type": "softmax", "labels": self.labels, "mu": self.mu.tolist(), "sd": self.sd.tolist(), "W": self.W.tolist()}
+
+    def predict_proba(self, x: np.ndarray) -> np.ndarray:
+        # Clip standardised inputs: a value far outside the training range should count as
+        # "very high", not overflow the logits.
+        z = np.clip((x - self.mu) / self.sd, -10.0, 10.0)
+        return _softmax(self.W[:, 0] + z @ self.W[:, 1:].T)
+
+    def predict(self, x: list[float]) -> tuple[str, float]:
+        p = self.predict_proba(np.asarray(x, float))
+        k = int(p.argmax())
+        return self.labels[k], float(p[k])
+
+
+def train(X: np.ndarray, y: list[str], labels: list[str] = LABELS, epochs: int = 400, lr: float = 0.1,
+          l2: float = 1e-3, hidden: int = 0, augment: int = 0, seed: int = 0) -> SoftmaxModel | MLPModel:
+    """Class-weighted training by full-batch gradient descent.
+
+    ``hidden=0`` fits multinomial logistic regression; a positive value fits one tanh hidden
+    layer. ``augment`` adds that many jittered copies of every example, which is what stops a
+    handful of recordings being memorised. Mirrors the browser trainer in docs/index.html."""
+    rng = np.random.default_rng(seed)
     mu, sd = X.mean(0), X.std(0)
     sd[sd < 1e-6] = 1.0          # effectively constant feature: leave unscaled rather than blow up
-    Z = (X - mu) / sd
+    Z = np.clip((X - mu) / sd, -10.0, 10.0)
     Y = np.asarray([labels.index(v) for v in y])
-    K, D, N = len(labels), X.shape[1], X.shape[0]
+    if augment:
+        Z = np.vstack([Z] + [Z + rng.uniform(-0.15, 0.15, Z.shape) for _ in range(augment)])
+        Y = np.tile(Y, augment + 1)
+    K, D, N = len(labels), Z.shape[1], Z.shape[0]
     counts = np.bincount(Y, minlength=K)
-    cw = np.where(counts > 0, N / (K * np.maximum(counts, 1)), 0.0)
-    W = np.zeros((K, D + 1))
-    Zb = np.hstack([np.ones((N, 1)), Z])
+    cw = np.where(counts > 0, N / (K * np.maximum(counts, 1)), 0.0)[Y][:, None]
     onehot = np.eye(K)[Y]
+    Zb = np.hstack([np.ones((N, 1)), Z])
+
+    if not hidden:
+        W = np.zeros((K, D + 1))
+        for _ in range(epochs):
+            P = _softmax(Zb @ W.T)
+            G = ((P - onehot) * cw).T @ Zb / N
+            G[:, 1:] += l2 * W[:, 1:]
+            W -= lr * G
+        return SoftmaxModel(list(labels), mu, sd, W)
+
+    H = hidden
+    W1 = np.hstack([np.zeros((H, 1)), rng.uniform(-1, 1, (H, D)) * np.sqrt(1 / D)])
+    W2 = np.zeros((K, H + 1))
     for _ in range(epochs):
-        logits = Zb @ W.T
-        logits -= logits.max(1, keepdims=True)
-        P = np.exp(logits)
-        P /= P.sum(1, keepdims=True)
-        G = ((P - onehot) * cw[Y][:, None]).T @ Zb / N
-        G[:, 1:] += l2 * W[:, 1:]
-        W -= lr * G
-    return SoftmaxModel(list(labels), mu, sd, W)
+        A = np.tanh(Zb @ W1.T)                       # (N, H)
+        Ab = np.hstack([np.ones((N, 1)), A])
+        P = _softmax(Ab @ W2.T)
+        dlogits = (P - onehot) * cw                  # (N, K)
+        G2 = dlogits.T @ Ab / N
+        G2[:, 1:] += l2 * W2[:, 1:]
+        dA = (dlogits @ W2[:, 1:]) * (1 - A ** 2)    # (N, H)
+        G1 = dA.T @ Zb / N
+        G1[:, 1:] += l2 * W1[:, 1:]
+        W2 -= lr * G2
+        W1 -= lr * G1
+    return MLPModel(list(labels), mu, sd, W1, W2)
 
 
-def load_model(path: Path | str) -> SoftmaxModel:
+def load_model(path: Path | str) -> SoftmaxModel | MLPModel:
+    """Loads either model shape. Files without a ``type`` predate the network and are softmax."""
     d = json.loads(Path(path).read_text())
-    return SoftmaxModel.from_json(d["model"] if "model" in d and d["model"] else d)
+    d = d["model"] if isinstance(d.get("model"), dict) else d
+    return MLPModel.from_json(d) if d.get("type") == "mlp" else SoftmaxModel.from_json(d)
 
 
 class LearnedClassifier:
@@ -101,7 +164,7 @@ class LearnedClassifier:
 
     behavior = Behavior.SLEEPING   # nominal; emits any behavior in the label set
 
-    def __init__(self, t: LearnedThresholds, model: SoftmaxModel, zones: list[SeatZone], fps: float) -> None:
+    def __init__(self, t: LearnedThresholds, model: SoftmaxModel | MLPModel, zones: list[SeatZone], fps: float) -> None:
         self.t = t
         self.model = model
         self.zones = zones
