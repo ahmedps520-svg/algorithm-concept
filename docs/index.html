@@ -190,7 +190,7 @@ const staff = () => $('#staff').value.trim();
 const ls = { get: k => { try { return localStorage.getItem(k); } catch { return null; } }, set: (k, v) => { try { localStorage.setItem(k, v); } catch {} } };
 $('#staff').value = ls.get('staff') || '';
 $('#staff').addEventListener('input', e => ls.set('staff', e.target.value));
-const nice = b => b.replace('_', ' ');
+const nice = b => b.replace(/_/g, ' ');
 const badge = (cls, txt) => `<span class="badge b-${cls}">${txt}</span>`;
 const T0 = performance.now(), BASE_WALL = Date.now();
 const now = () => (performance.now() - T0) / 1000;
@@ -398,7 +398,7 @@ function expiry(a) {
 // Learned classifier: window features -> softmax regression trained in the browser on the
 // viewer's own labelled recordings. Same feature order as classroom_monitor/behavior/learned.py.
 // =====================================================================================
-const LEARN = { labels: ['normal', 'sleeping', 'out_of_seat', 'talking', 'fighting'], windowS: 2, stepS: 0.5, minProb: 0.7, minFrac: 0.6, minObs: 8 };
+const LEARN = { labels: ['normal', 'sleeping', 'out_of_seat', 'talking', 'fighting'], windowS: 2, stepS: 0.5, minProb: 0.7, minFrac: 0.6, minObs: 4, minSpan: 1.0 };
 const FEAT_NAMES = ['headDrop', 'relDrop', 'tilt', 'yaw', 'motion', 'headMotion', 'armsUp', 'mouth', 'inZone', 'gap', 'partnerMotion', 'hasPose'];
 function frameFeatures(o) {
   return [o.headDrop ?? 0, o.relDrop ?? 0, (o.headTilt ?? 0) / 45, o.headYaw ?? 0, Math.min(o.motion, 5), Math.min(o.headMotion, 5),
@@ -406,7 +406,7 @@ function frameFeatures(o) {
 }
 function windowFeatures(st, ts) {
   const obs = st.obs.filter(o => o.ts >= ts - LEARN.windowS);
-  if (obs.length < LEARN.minObs) return null;
+  if (obs.length < LEARN.minObs || obs[obs.length - 1].ts - obs[0].ts < LEARN.minSpan) return null;   // works down to ~3 detections/s
   const F = obs.map(frameFeatures), D = F[0].length, x = [];
   for (let d = 0; d < D; d++) {
     const v = F.map(f => f[d]), mean = v.reduce((a, b) => a + b, 0) / v.length;
@@ -418,7 +418,7 @@ function windowFeatures(st, ts) {
 let trainSet = [], model = null, rec = null;
 try { trainSet = JSON.parse(ls.get('train:v2') || '[]'); } catch {}
 try { model = JSON.parse(ls.get('model:v2') || 'null'); } catch {}
-const saveTrain = () => ls.set('train:v2', JSON.stringify(trainSet.slice(-3000)));
+const saveTrain = () => { trainSet = trainSet.slice(-4000); ls.set('train:v2', JSON.stringify(trainSet)); };
 function softmax(z) { const m = Math.max(...z), e = z.map(v => Math.exp(v - m)), s = e.reduce((a, b) => a + b, 0); return e.map(v => v / s); }
 function predict(m, x) {
   const z = m.W.map(row => row[0] + x.reduce((a, v, i) => a + row[i + 1] * Math.max(-10, Math.min(10, (v - m.mu[i]) / m.sd[i])), 0));   // clip out-of-range inputs
@@ -463,10 +463,35 @@ function trainAndEvaluate() {
 }
 function recordWindows(room, ts) {
   if (!rec) return;
-  if (ts >= rec.until) { rec = null; $('#rec-status').textContent = 'saved'; renderTrainCounts(); return; }
+  if (ts >= rec.until) {
+    const done = rec; rec = null; renderTrainCounts();
+    if (!done.n) { $('#rec-status').textContent = 'nothing stored: no person was tracked during the recording'; $('#train-result').innerHTML = '<b style="color:var(--new)">Recording stored 0 windows.</b> Make sure a green box with an id is on the person the whole time, then record again.'; return; }
+    $('#rec-status').textContent = `stored ${done.n} windows of "${nice(done.label)}"`;
+    autoTrain();
+    return;
+  }
   if (ts - rec.last < LEARN.stepS) return;
-  for (const st of room.tracks.values()) { if (ts - st.lastSeen > 0.3) continue; const x = windowFeatures(st, ts); if (x) { trainSet.push({ x, y: rec.label, room: room.kind, t: Date.now() }); rec.n++; } }
+  for (const st of room.tracks.values()) { if (ts - st.lastSeen > 0.5) continue; const x = windowFeatures(st, ts); if (x) { trainSet.push({ x: x.map(v => Math.round(v * 1e4) / 1e4), y: rec.label, room: room.kind, t: Date.now() }); rec.n++; } }
   rec.last = ts; $('#rec-status').textContent = `recording ${rec.label}… ${(rec.until - ts).toFixed(0)} s · ${rec.n} windows`; saveTrain();
+}
+function autoTrain() {
+  // Retrain after every recording so the model is always up to date without pressing Train.
+  const byLabel = Object.fromEntries(LEARN.labels.map(l => [l, trainSet.filter(e => e.y === l).length]));
+  const behaviors = LEARN.labels.filter(l => l !== 'normal' && byLabel[l]);
+  if (!byLabel.normal || !behaviors.length) {
+    $('#train-result').innerHTML = `<b style="color:var(--ack)">Not trained yet.</b> Need examples of <b>normal</b> and at least one behavior. So far: ${LEARN.labels.filter(l => byLabel[l]).map(l => `${nice(l)} ${byLabel[l]}`).join(', ') || 'none'}. Record "${!byLabel.normal ? 'normal' : 'a behavior'}" next.`;
+    return;
+  }
+  runTraining(true);
+}
+function runTraining(auto) {
+  try {
+    const t0 = performance.now(), r = trainAndEvaluate();
+    if (r.error) { $('#train-result').innerHTML = `<b style="color:var(--ack)">${r.error}</b>`; return; }
+    const confTxt = Object.entries(r.conf).map(([y, row]) => `${nice(y)} → ${Object.entries(row).map(([p, n]) => `${nice(p)} ${n}`).join(', ')}`).join(' · ');
+    $('#train-result').innerHTML = `<b style="color:var(--ok)">${auto ? 'Auto-trained' : 'Trained'}</b> on ${r.n} examples in ${(performance.now() - t0).toFixed(0)} ms. ` + (r.holdout ? `Held-out accuracy <b>${(r.acc * 100).toFixed(0)}%</b> (${confTxt}).` : 'Fewer than 5 examples in some class, so no held-out score yet; record more.') + ' Model saved in this browser and running now; it stays after refresh.';
+    renderTrainCounts(); for (const r of ROOMS) for (const st of r.tracks.values()) st.learnedGates = {};
+  } catch (e) { console.error(e); $('#train-result').innerHTML = `<b style="color:var(--new)">Training failed: ${e.message}</b>`; }
 }
 function renderTrainCounts() {
   const counts = LEARN.labels.map(l => `${nice(l)}: <b>${trainSet.filter(e => e.y === l).length}</b>`).join(' · ');
@@ -477,15 +502,9 @@ function renderTrainCounts() {
 $('#rec-btn').onclick = () => {
   if (!ROOMS.some(r => r.tracks.size)) return alert('Add a camera and make sure a person is detected first.');
   const label = $('#rec-label').value; let count = 3; $('#rec-status').textContent = `get ready: ${label} in 3…`;
-  const iv = setInterval(() => { count--; if (count > 0) $('#rec-status').textContent = `get ready: ${label} in ${count}…`; else { clearInterval(iv); rec = { label, until: now() + 6, last: 0, n: 0 }; } }, 1000);
+  const iv = setInterval(() => { count--; if (count > 0) $('#rec-status').textContent = `get ready: ${label} in ${count}…`; else { clearInterval(iv); rec = { label, until: now() + 6, last: 0, n: 0 }; $('#rec-status').textContent = `recording ${label}…`; } }, 1000);
 };
-$('#train-btn').onclick = () => {
-  const t0 = performance.now(), r = trainAndEvaluate();
-  if (r.error) { $('#train-result').textContent = r.error; return; }
-  const confTxt = Object.entries(r.conf).map(([y, row]) => `${nice(y)} → ${Object.entries(row).map(([p, n]) => `${nice(p)} ${n}`).join(', ')}`).join(' · ');
-  $('#train-result').innerHTML = `Trained on ${r.n} examples in ${(performance.now() - t0).toFixed(0)} ms. ` + (r.holdout ? `Held-out accuracy <b>${(r.acc * 100).toFixed(0)}%</b> (${confTxt}).` : 'Fewer than 5 examples in some class, so no held-out score yet; record more.') + ' Model saved in this browser and now running.';
-  renderTrainCounts(); for (const r of ROOMS) for (const st of r.tracks.values()) st.learnedGates = {};
-};
+$('#train-btn').onclick = () => runTraining(false);
 $('#export-btn').onclick = () => {
   const blob = new Blob([JSON.stringify({ version: 2, features: FEAT_NAMES, window_s: LEARN.windowS, labels: LEARN.labels, examples: trainSet, model }, null, 0)], { type: 'application/json' });
   const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: `classroom-training-${new Date().toISOString().slice(0, 10)}.json` }); a.click();
@@ -857,6 +876,8 @@ $('#clipplay').onclick = () => clipTimer ? pause() : play();
 $('#clipseek').oninput = e => { pause(); showFrame(+e.target.value); };
 $('#clipdlg').addEventListener('close', pause);
 renderQueue(); renderLog(); renderTrainCounts();
+if (model) $('#train-result').innerHTML = `<b style="color:var(--ok)">Model restored</b> from this browser: ${model.n} examples${model.acc != null ? `, ${(model.acc * 100).toFixed(0)}% held-out` : ''}, trained ${new Date(model.trainedAt).toLocaleString()}. It runs as soon as a camera is added.`;
+else if (trainSet.length) autoTrain();
 </script>
 </body>
 </html>
