@@ -106,7 +106,7 @@ def test_head_slumping_toward_shoulders_fires_sleeping_via_baseline():
     collapses to ~45 % of this person's own upright baseline."""
     def script(t, a):
         if t >= 6:
-            a[3].head_drop, a[3].jitter = 0.28, 0.0005     # nose_y = top+0.08h+0.098h < shoulders at top+0.25h
+            a[3].head_drop, a[3].jitter = 0.5, 0.0005      # nose ends level with the shoulders, not below them
     th = BehaviorThresholds()
     hit = first(run(seated_actors(), script, 45, th), Behavior.SLEEPING)
     assert hit is not None
@@ -114,6 +114,36 @@ def test_head_slumping_toward_shoulders_fires_sleeping_via_baseline():
     assert ev.evidence["cue"] == "head dropped vs own baseline"
     assert ev.evidence["head_drop"] < th.sleeping.head_below_shoulders_ratio
     assert abs(ts - (6 + th.sleeping.min_duration_s)) < 1.5
+
+
+def test_upright_person_shifting_posture_never_fires_sleeping():
+    """The user-reported false positive: sitting still, facing the camera, head above the
+    shoulders the whole time, but leaning in and out so head height varies a lot. The relative
+    cue must not fire while the nose is still well above shoulder level."""
+    def script(t, a):
+        a[3].head_drop = 0.30 if int(t) % 6 < 3 else 0.0     # leans in and back, never head-down
+    events = run(seated_actors(), script, 60)
+    assert first(events, Behavior.SLEEPING) is None
+
+
+def test_eyes_visible_at_normal_height_vetoes_sleeping():
+    from classroom_monitor.behavior.features import Observation, TrackState
+    from classroom_monitor.behavior.classifiers import SleepingClassifier
+    from classroom_monitor.config import SleepingThresholds
+
+    t = SleepingThresholds(min_duration_s=1.0, window_s=5.0)
+    clf = SleepingClassifier(t, fps=10)
+    st = TrackState(1, 5.0)
+    fired = False
+    for i in range(60):
+        o = Observation(i / 10, 0.5, 0.5, 0.1, 0.3, 0.5, 0.65, motion=0.0, vx=0, vy=0,
+                        head_drop=0.4, arms_up=False, head_yaw=0.0, pose_available=True,
+                        head_height=0.1, head_tilt=50.0, nose=(0.5, 0.3), shoulder_w=0.08,
+                        eyes_visible=True)
+        o.rel_drop = 0.05                       # head at its normal height
+        st.push(o)
+        fired |= clf.evaluate(st, [], o.ts) is not None
+    assert not fired, "eyes visible at normal head height must veto sleeping"
 
 
 def test_head_down_but_fidgeting_does_not_fire_sleeping():

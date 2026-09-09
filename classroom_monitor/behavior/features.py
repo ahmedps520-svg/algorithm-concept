@@ -7,7 +7,7 @@ from collections import deque
 from dataclasses import dataclass
 
 from ..perception.types import (
-    L_EAR, L_SHOULDER, L_WRIST, NOSE, R_EAR, R_SHOULDER, R_WRIST, L_HIP, R_HIP, TrackedPerson,
+    L_EAR, L_EYE, L_SHOULDER, L_WRIST, NOSE, R_EAR, R_EYE, R_SHOULDER, R_WRIST, L_HIP, R_HIP, TrackedPerson,
 )
 
 
@@ -32,6 +32,7 @@ class Observation:
     nose: tuple[float, float] | None = None   # normalised nose position
     shoulder_w: float | None = None    # normalised shoulder width
     head_motion: float = 0.0           # nose displacement, shoulder widths per second
+    eyes_visible: bool = False         # both eye keypoints confidently detected
     rel_drop: float | None = None      # 1 - head_height / this track's upright baseline
 
 
@@ -56,10 +57,17 @@ class TrackState:
             if dt > 1e-3:
                 unit = max(o.shoulder_w or o.w * 0.6, 1e-3)
                 o.head_motion = math.hypot(o.nose[0] - prev.nose[0], o.nose[1] - prev.nose[1]) / unit / dt
-        if o.head_height is not None and o.head_drop is not None and o.head_drop < 0.05 and self.head_base_n < 30:
-            self.head_base = o.head_height if self.head_base is None else self.head_base + 0.2 * (o.head_height - self.head_base)
+        # Upright baseline = the tallest head position seen lately: rises fast, decays very
+        # slowly, so a baseline captured in an odd posture corrects itself within seconds.
+        if o.head_height is not None:
+            if self.head_base is None:
+                self.head_base = o.head_height
+            elif o.head_height > self.head_base:
+                self.head_base += 0.3 * (o.head_height - self.head_base)
+            else:
+                self.head_base *= 0.9995
             self.head_base_n += 1
-        if o.head_height is not None and self.head_base is not None and self.head_base_n >= 10:
+        if o.head_height is not None and self.head_base is not None and self.head_base_n >= 20:
             o.rel_drop = 1.0 - o.head_height / max(self.head_base, 1e-3)
         self.obs.append(o)
         self.last_seen = o.ts
@@ -94,9 +102,10 @@ def observe(person: TrackedPerson, ts: float, frame_w: int, frame_h: int,
 
     head_drop = arms_up = head_yaw = None
     head_height = head_tilt = nose_n = shoulder_w = None
-    pose_ok = False
+    pose_ok = eyes_visible = False
     kp = person.keypoints
     if kp is not None:
+        eyes_visible = kp.pt(L_EYE, 0.4) is not None and kp.pt(R_EYE, 0.4) is not None
         nose = kp.pt(NOSE)
         ls, rs = kp.pt(L_SHOULDER), kp.pt(R_SHOULDER)
         lh, rh = kp.pt(L_HIP), kp.pt(R_HIP)
@@ -123,4 +132,5 @@ def observe(person: TrackedPerson, ts: float, frame_w: int, frame_h: int,
             head_tilt = math.degrees(math.atan2(re[1] - le[1], re[0] - le[0]))
 
     return Observation(ts, cx, cy, w, h, fx, fy, motion, vx, vy, head_drop, arms_up, head_yaw, pose_ok,
-                       head_height=head_height, head_tilt=head_tilt, nose=nose_n, shoulder_w=shoulder_w)
+                       head_height=head_height, head_tilt=head_tilt, nose=nose_n, shoulder_w=shoulder_w,
+                       eyes_visible=eyes_visible)

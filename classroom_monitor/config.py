@@ -60,9 +60,15 @@ class SleepingThresholds(BaseModel):
     # Head (nose) must sit below the shoulder line by this fraction of torso height.
     head_below_shoulders_ratio: float = 0.15
     # Or: head height (nose above shoulders, in shoulder widths) dropped by this fraction of baseline.
-    relative_drop: float = 0.4
+    relative_drop: float = 0.45
     # Or: ear line tilted at least this many degrees from horizontal.
-    tilt_deg: float = 25.0
+    tilt_deg: float = 40.0
+    # The relative and tilt cues only count once the nose has come down to about shoulder level.
+    min_drop_for_relative: float = -0.10
+    # Awake veto: both eyes plainly visible with the head at its normal height is someone
+    # looking at the room, whatever the other cues say.
+    awake_relative_drop: float = 0.25
+    awake_head_drop: float = -0.2
     # Mean torso motion over the last second (box widths/s) below this counts as still.
     # Detector box jitter alone is ~0.1-0.2, so keep this comfortably above that.
     max_motion: float = 0.3
@@ -197,8 +203,9 @@ class VerifierConfig(BaseModel):
     columns: int = 3
     timeout_s: float = 180.0
     temperature: float = 0.0
-    # Keep the model's reply short; the 32B spills into system RAM and runs at a few tokens/s.
-    max_tokens: int = 200
+    # Reply budget. Kept modest because a 27B/32B spills into system RAM and runs at a few
+    # tokens/s, but large enough that a thinking model still has room to answer.
+    max_tokens: int = 600
 
 
 class DashboardConfig(BaseModel):

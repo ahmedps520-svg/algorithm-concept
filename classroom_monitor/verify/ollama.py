@@ -197,14 +197,27 @@ class OllamaVerifier:
             "model": self.cfg.model,
             "stream": False,
             "format": SCHEMA,
+            # qwen3-vl reasons before answering. With thinking on, the reply budget is spent on
+            # that and "content" comes back empty, so turn it off and read "thinking" as a
+            # fallback for models or builds that ignore the flag.
+            "think": False,
+            "keep_alive": "10m",
             "options": {"temperature": self.cfg.temperature, "num_predict": self.cfg.max_tokens},
             "messages": [{"role": "user", "content": build_prompt(alert, offsets, self.cfg.columns),
                           "images": [base64.b64encode(data).decode()]}],
         }
         t0 = self.clock()
         try:
-            resp = self.transport(f"{self.cfg.base_url}/api/chat", body, self.cfg.timeout_s)
-            text = resp.get("message", {}).get("content", "") if isinstance(resp, dict) else ""
+            try:
+                resp = self.transport(f"{self.cfg.base_url}/api/chat", body, self.cfg.timeout_s)
+            except urllib.error.HTTPError as e:          # older builds reject unknown fields
+                if e.code != 400:
+                    raise
+                resp = self.transport(f"{self.cfg.base_url}/api/chat", {k: v for k, v in body.items() if k != "think"}, self.cfg.timeout_s)
+            msg = resp.get("message", {}) if isinstance(resp, dict) else {}
+            text = (msg.get("content") or "").strip() or (msg.get("thinking") or "").strip()
+            if not text:
+                raise ValueError(f"model returned no text (done_reason: {resp.get('done_reason', 'unknown')})")
             v = parse_verdict(text)
             alert.ai_verdict, alert.ai_confidence = v["verdict"], v["confidence"]
             alert.ai_summary, alert.ai_reason = v["summary"], v["reason"]

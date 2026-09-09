@@ -126,7 +126,7 @@
         <ol>
           <li>Each camera is a room. Frames go to <b>MoveNet MultiPose</b> (TensorFlow.js) running in your browser: up to 6 people, 17 keypoints each, with a built-in box tracker giving stable ids. In the Python backend this stage is YOLOv8-pose + ByteTrack on an RTSP feed; the classifiers downstream are the same.</li>
           <li>A second model, MediaPipe Face Landmarker, gives lip movement (jaw-open blendshape) for the talking cue. That only resolves at short range; in a classroom this cue needs an audio channel.</li>
-          <li>Per track, each frame yields cues: torso motion, head motion, a nearby moving partner, relative velocity, sustained arm raise, head down (nose below shoulders, or the head dropping versus this person's own upright baseline learned in the first seconds, or the head tilted onto a hand), foot point outside every seat zone, lip movement, head turning.</li>
+          <li>Per track, each frame yields cues: torso motion, head motion, a nearby moving partner, relative velocity, sustained arm raise, head down (nose below shoulders, or the head dropped versus this person's own upright baseline, or tilted onto a hand) with an awake-veto when both eyes are plainly visible at normal head height, foot point outside every seat zone, lip movement, head turning.</li>
           <li>Each behavior sits behind a <b>sustained-condition gate</b> with a minimum duration and a minimum fraction of active frames. Demo timing: fighting 2 s, sleeping 6 s, out of seat 4 s, talking 3 s. Classroom timing: 3 / 20 / 8 / 5 s. A single frame can never alert.</li>
           <li>A seat zone is created automatically around anyone who stays put for a few seconds without one (labelled "auto seat"); you can also draw zones by hand.</li>
           <li>Repeats merge into the open alert; per-track (120 s) and per-room (30 s) cooldowns stop duplicates.</li>
@@ -173,14 +173,18 @@ const PRESETS = {
   // Classroom timing = the shipped backend config. Demo timing keeps the same cues and
   // evidence fractions but shorter durations so a person testing alone sees results quickly.
   classroom: { fighting: 3, sleeping: 20, out_of_seat: 8, talking: 5, autoSeat: 6 },
-  demo:      { fighting: 2, sleeping: 6,  out_of_seat: 4, talking: 3, autoSeat: 3 },
+  demo:      { fighting: 2, sleeping: 10, out_of_seat: 6, talking: 4, autoSeat: 3 },
 };
 const TH = {
   fighting: { window: 4, minDur: 3, minFrac: 0.6, motionSpike: 0.6, proximity: 0.6, relative: 0.5, partnerMotion: 0.3, armFrames: 6, frameScore: 0.6, floor: 0.5 },
   // Sleeping = head down AND still. Head down is any of: nose below the shoulder line
   // (headDrop), the nose-to-shoulder height collapsing versus this person's own upright
   // baseline (relDrop; works with an eye-level webcam), or the head tilted onto a hand/shoulder.
-  sleeping: { window: 25, minDur: 12, minFrac: 0.85, headDrop: 0.15, relDrop: 0.4, tiltDeg: 25, maxMotion: 0.3, maxHeadMotion: 0.6 },
+  // Sleeping needs the head to actually come DOWN toward the shoulders and stay still. The
+  // relative-drop and tilt cues only count once the nose is near shoulder level (minDrop), and
+  // a face with both eyes plainly visible at normal head height vetoes the whole thing: that
+  // is someone looking at the room, however they are sitting.
+  sleeping: { window: 25, minDur: 12, minFrac: 0.85, headDrop: 0.15, relDrop: 0.45, minDrop: -0.10, tiltDeg: 40, awakeRelDrop: 0.25, awakeHeadDrop: -0.2, maxMotion: 0.3, maxHeadMotion: 0.6 },
   out_of_seat: { window: 10, minDur: 8, minFrac: 0.8, margin: 0.03, autoSeat: 3, autoSeatMotion: 0.5 },
   // Talking = lip movement (face landmarks; only resolvable at short range) or repeated head
   // turning. Yaw-only evidence is capped at LOW confidence; lip evidence may reach MEDIUM.
@@ -195,7 +199,7 @@ function applyPreset(name) {
 const DEBOUNCE = { perTrack: 120, perRoom: 30 };
 const CLIP = { pre: 10, post: 10, fps: 10, w: 320, h: 180 };
 const RETENTION = { unreviewed_h: 48, dismissed_h: 24, actionable_d: 90 };
-const TRACK_TTL = 5, MIN_TRACK_AGE = 3;
+const TRACK_TTL = 5, MIN_TRACK_AGE = 3, MIN_TRACK_AGE_S = 5;   // a track must also have existed this long before it can alert
 const $ = s => document.querySelector(s);
 const staff = () => $('#staff').value.trim();
 const ls = { get: k => { try { return localStorage.getItem(k); } catch { return null; } }, set: (k, v) => { try { localStorage.setItem(k, v); } catch {} } };
@@ -245,15 +249,21 @@ class TrackState {
     const prev = this.obs[this.obs.length - 1];
     if (this.firstSeen === null) this.firstSeen = ts;
     const o = { ts, cx: d.cx, cy: d.cy, w: d.w, h: d.h, fx: d.fx ?? d.cx, fy: d.fy ?? (d.cy + d.h / 2), vx: 0, vy: 0, motion: 0, headMotion: 0,
-                headDrop: d.headDrop, headHeight: d.headHeight, headTilt: d.headTilt, nose: d.nose, shoulderW: d.shoulderW, armsUp: d.armsUp, headYaw: d.headYaw, mouth: d.mouth, relDrop: null };
+                headDrop: d.headDrop, headHeight: d.headHeight, headTilt: d.headTilt, nose: d.nose, shoulderW: d.shoulderW, armsUp: d.armsUp, headYaw: d.headYaw, mouth: d.mouth, eyesVisible: !!d.eyesVisible, relDrop: null };
     if (prev) { const dt = ts - prev.ts; if (dt > 1e-3) {
       o.vx = (o.cx - prev.cx) / dt; o.vy = (o.cy - prev.cy) / dt;
       o.motion = Math.hypot(o.cx - prev.cx, o.cy - prev.cy) / Math.max(o.w, 1e-3) / dt;
       if (o.nose && prev.nose) o.headMotion = Math.hypot(o.nose[0] - prev.nose[0], o.nose[1] - prev.nose[1]) / Math.max(o.shoulderW || o.w * 0.6, 1e-3) / dt; } }
     // Baseline: median-ish (EMA) of head height while clearly upright, learned over the first ~3 s.
-    if (o.headHeight != null && o.headDrop != null && o.headDrop < 0.05 && this.headBaseN < 30) {
-      this.headBase = this.headBase == null ? o.headHeight : this.headBase + (o.headHeight - this.headBase) * 0.2; this.headBaseN++; }
-    if (o.headHeight != null && this.headBase != null && this.headBaseN >= 10) o.relDrop = 1 - o.headHeight / Math.max(this.headBase, 1e-3);
+    // Upright baseline = the tallest head position seen lately, rising fast and decaying very
+    // slowly. A baseline captured during an unusual posture corrects itself within seconds,
+    // instead of leaving the person permanently looking "dropped".
+    if (o.headHeight != null) {
+      this.headBase = this.headBase == null ? o.headHeight
+        : (o.headHeight > this.headBase ? this.headBase + (o.headHeight - this.headBase) * 0.3 : this.headBase * 0.9995);
+      this.headBaseN++;
+    }
+    if (o.headHeight != null && this.headBase != null && this.headBaseN >= 20) o.relDrop = 1 - o.headHeight / Math.max(this.headBase, 1e-3);
     this.obs.push(o); while (this.obs.length && ts - this.obs[0].ts > 25) this.obs.shift();
     this.age++; this.lastSeen = ts;
     return o;
@@ -262,7 +272,7 @@ class TrackState {
   zoneAt(x, y) { const m = TH.out_of_seat.margin; return this.room.zones.find(z => x >= z.x1 - m && x <= z.x2 + m && y >= z.y1 - m && y <= z.y2 + m) || null; }
   evaluate(others, ts) {
     const cur = this.latest, events = [], prog = {};
-    if (this.age < MIN_TRACK_AGE) return events;
+    if (this.age < MIN_TRACK_AGE || this.firstSeen == null || ts - this.firstSeen < MIN_TRACK_AGE_S) return events;
     let gap = Infinity; const cands = [];
     for (const o of others) { const p = o.latest; if (!p) continue;
       const dx = Math.max(0, Math.abs(cur.cx - p.cx) - (cur.w + p.w) / 2), dy = Math.max(0, Math.abs(cur.cy - p.cy) - (cur.h + p.h) / 2);
@@ -292,13 +302,17 @@ class TrackState {
     const recent = this.obs.filter(o => o.ts >= ts - 1);
     const meanMotion = recent.reduce((a, o) => a + o.motion, 0) / recent.length, meanHead = recent.reduce((a, o) => a + o.headMotion, 0) / recent.length;
     const still = meanMotion <= TH.sleeping.maxMotion && meanHead <= TH.sleeping.maxHeadMotion;
+    // Awake veto: both eyes clearly visible and the head at its normal height.
+    const awake = cur.eyesVisible && (cur.relDrop != null ? cur.relDrop < TH.sleeping.awakeRelDrop
+                                                          : cur.headDrop != null && cur.headDrop <= TH.sleeping.awakeHeadDrop);
+    const nearShoulders = cur.headDrop != null && cur.headDrop >= TH.sleeping.minDrop;
     const downAbs = cur.headDrop != null && cur.headDrop >= TH.sleeping.headDrop;
-    const downRel = cur.relDrop != null && cur.relDrop >= TH.sleeping.relDrop;
-    const tilted = cur.headTilt != null && Math.abs(cur.headTilt) >= TH.sleeping.tiltDeg;
-    const headDown = downAbs || downRel || tilted;
+    const downRel = nearShoulders && cur.relDrop != null && cur.relDrop >= TH.sleeping.relDrop;
+    const tilted = nearShoulders && cur.headTilt != null && Math.abs(cur.headTilt) >= TH.sleeping.tiltDeg;
+    const headDown = !awake && (downAbs || downRel || tilted);
     r = this.gates.sleeping.update(ts, headDown && still); prog.sleeping = r;
     if (r.trig) events.push({ behavior: 'sleeping', tracks: [this.id], score: Math.min(1, 0.4 + 0.3 * r.frac + 0.3 * (downAbs ? 1 : downRel ? Math.min(1, cur.relDrop / 0.7) : 0.6)), sustained: r.sustained,
-                              evidence: { cue: downAbs ? 'nose below shoulders' : downRel ? 'head dropped vs own baseline' : 'head tilted', head_drop: cur.headDrop?.toFixed(2), rel_drop: cur.relDrop?.toFixed(2), tilt_deg: cur.headTilt?.toFixed(0), motion: meanMotion.toFixed(3), active_fraction: r.frac.toFixed(2) } });
+                              evidence: { cue: downAbs ? 'nose below shoulders' : downRel ? 'head dropped vs own baseline' : 'head tilted onto hand/shoulder', head_drop: cur.headDrop?.toFixed(2), rel_drop: cur.relDrop?.toFixed(2), tilt_deg: cur.headTilt?.toFixed(0), motion: meanMotion.toFixed(3), active_fraction: r.frac.toFixed(2) } });
     // --- out of seat. A seat zone is created automatically around anyone who stays put for a
     //     few seconds and has no zone yet, so the demo works without drawing anything.
     let z = this.zoneAt(cur.fx, cur.fy);
@@ -306,7 +320,8 @@ class TrackState {
     if (!this.homeZone) {
       if (meanMotion <= TH.out_of_seat.autoSeatMotion) { if (this.stillSince == null) this.stillSince = ts; } else this.stillSince = null;
       if (this.stillSince != null && ts - this.stillSince >= TH.out_of_seat.autoSeat && !z) {
-        z = { id: 'auto' + (this.room.zones.length + 1), x1: Math.max(0, cur.cx - cur.w * 0.9), y1: Math.max(0, cur.cy - cur.h * 0.7), x2: Math.min(1, cur.cx + cur.w * 0.9), y2: Math.min(1, cur.fy + cur.h * 0.25), auto: true };
+        // Roomy on purpose: leaning, turning and shifting in the chair must not read as leaving.
+        z = { id: 'auto' + (this.room.zones.length + 1), x1: Math.max(0, cur.cx - cur.w * 1.4), y1: Math.max(0, cur.cy - cur.h * 0.9), x2: Math.min(1, cur.cx + cur.w * 1.4), y2: Math.min(1, cur.fy + cur.h * 0.45), auto: true };
         this.room.zones.push(z); saveZones(this.room); this.homeZone = z.id;
       }
     }
@@ -764,6 +779,8 @@ async function addCamera(deviceId) {
         else { const a = 0.5; sm.cx += (rawCx - sm.cx) * a; sm.cy += (rawCy - sm.cy) * a; sm.w += ((x2 - x1) - sm.w) * 0.3; sm.h += ((y2 - y1) - sm.h) * 0.3; }
         seen.add(sid);
         let headDrop = null, headHeight = null, headTilt = null, headYaw = null, armsUp = false, nosePt = null;
+        // Both eyes clearly detected: the face is turned toward the camera and not buried in an arm.
+        const eyesVisible = kp[1][2] >= 0.4 && kp[2][2] >= 0.4;
         if (nose[2] >= 0.3) {
           nosePt = [nose[0], nose[1]];
           headDrop = (nose[1] - shY) / torso;                       // >0 = nose below the shoulder line
@@ -782,7 +799,7 @@ async function addCamera(deviceId) {
           faces.faceLandmarks.forEach((lm, i) => { const d = Math.hypot(lm[1].x - nosePt[0], lm[1].y - nosePt[1]); if (d < bestD) { bestD = d; best = i; } });
           if (best >= 0) mouth = mouthOpenness(faces, best);
         }
-        dets.push({ id: sid, cx: sm.cx, cy: sm.cy, w: Math.max(sm.w, 0.02), h: Math.max(sm.h, 0.02), box: [x1, y1, x2, y2], fx: sm.cx, fy: Math.min(1, y2), headDrop, headHeight, headTilt, headYaw, nose: nosePt, shoulderW, armsUp, mouth });
+        dets.push({ id: sid, cx: sm.cx, cy: sm.cy, w: Math.max(sm.w, 0.02), h: Math.max(sm.h, 0.02), box: [x1, y1, x2, y2], fx: sm.cx, fy: Math.min(1, y2), headDrop, headHeight, headTilt, headYaw, nose: nosePt, shoulderW, armsUp, mouth, eyesVisible });
         kps.set(sid, kp);
       }
       for (const id of [...smooth.keys()]) if (!seen.has(id)) smooth.delete(id);
@@ -852,18 +869,28 @@ function addSimRoom() {
       const kp = []; kp[0] = [cx, noseY, 1]; kp[5] = [cx - 0.35 * w, shY, 1]; kp[6] = [cx + 0.35 * w, shY, 1]; kp[7] = [cx - 0.45 * w, shY + 0.15 * h, 1]; kp[8] = [cx + 0.45 * w, shY + 0.15 * h, 1];
       kp[9] = [cx - 0.5 * w, wy, 1]; kp[10] = [cx + 0.5 * w, wy, 1]; kp[11] = [cx - 0.2 * w, hipY, 1]; kp[12] = [cx + 0.2 * w, hipY, 1]; kp[13] = [cx - 0.22 * w, hipY + 0.2 * h, 1]; kp[14] = [cx + 0.22 * w, hipY + 0.2 * h, 1]; kp[15] = [cx - 0.25 * w, top + h, 1]; kp[16] = [cx + 0.25 * w, top + h, 1];
       c.fillStyle = '#e8c9a0'; c.beginPath(); c.arc(cx * W, noseY * H, 0.09 * h * H, 0, Math.PI * 2); c.fill();
-      dets.push({ id: a.id, cx, cy, w, h, headDrop: (noseY - shY) / (hipY - shY), headHeight: (shY - noseY) / (0.7 * w), headTilt: 0, nose: [cx, noseY], shoulderW: 0.7 * w, armsUp: a.armsUp, headYaw: a.yaw ?? 0, mouth: a.mouth ?? null }); kps.set(a.id, kp);
+      dets.push({ id: a.id, cx, cy, w, h, headDrop: (noseY - shY) / (hipY - shY), headHeight: (shY - noseY) / (0.7 * w), headTilt: 0, nose: [cx, noseY], shoulderW: 0.7 * w, armsUp: a.armsUp, headYaw: a.yaw ?? 0, mouth: a.mouth ?? null, eyesVisible: a.headDrop < 0.5 }); kps.set(a.id, kp);
     }
     drawOverlays(room, dets, kps); processFrame(room, dets, t);
   }, 100);
   room.stop = () => clearInterval(timer);
 }
 $('#addsim').onclick = addSimRoom;
+// Safety net for the automatic second opinion: any saved clip without a verdict gets one.
+// (The per-clip trigger can be missed if the verifier was switched on after the clip landed.)
+setInterval(() => { if (!VER.on) return; const a = alerts.find(a => a.clip && !a.ai_verdict && !a.ai_busy); if (a) verifyAlert(a, false); }, 4000);
 
 // =====================================================================================
 // AI second opinion: local Ollama vision model on a contact sheet of clip frames
 // =====================================================================================
 const VER = { on: false, url: 'http://localhost:11434', model: 'qwen3-vl:8b', offsets: [-6, -3, -1, 0, 2, 5], cols: 3, tile: 480 };
+// Structured output: Ollama constrains the reply to this shape, so we get JSON even from a
+// chatty model. qwen3-vl is a thinking model, so we also turn thinking off: with it on, the
+// reply budget is spent reasoning and `content` comes back empty.
+const VERDICT_SCHEMA = { type: 'object', properties: {
+  verdict: { type: 'string', enum: ['likely_real', 'likely_false_alarm', 'unclear'] },
+  what_is_happening: { type: 'string' }, confidence: { type: 'number' }, reason: { type: 'string' }, people_involved: { type: 'integer' },
+}, required: ['verdict', 'what_is_happening', 'confidence', 'reason'] };
 const GUIDE = {
   fighting: ['physical aggression: hitting, kicking, shoving with force, grappling, one person clearly trying to hurt or dominate another', 'play-fighting, horseplay, high-fives, hugging, dancing, helping someone up, reaching past someone'],
   sleeping: ['head down on the desk or arms, or eyes closed and slumped, staying that way', 'reading, writing, looking at a phone or paper on the desk, resting chin on hand while watching'],
@@ -901,7 +928,7 @@ function verifyPrompt(a, used) {
 function parseVerdict(text) {
   const cands = [text]; const m1 = text.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/); if (m1) cands.unshift(m1[1]); const m2 = text.match(/\{[\s\S]*\}/); if (m2) cands.push(m2[0]);
   let d = null; for (const c of cands) { try { const j = JSON.parse(c); if (j && typeof j === 'object' && 'verdict' in j) { d = j; break; } } catch {} }
-  if (!d) throw new Error('no JSON verdict in reply: ' + text.slice(0, 120));
+  if (!d) throw new Error(`no JSON verdict in this reply: ${JSON.stringify(text.slice(0, 200))}`);
   let v = String(d.verdict || 'unclear').toLowerCase().replace(/ /g, '_'); if (!['likely_real', 'likely_false_alarm', 'unclear'].includes(v)) v = 'unclear';
   let conf = parseFloat(d.confidence); if (isNaN(conf)) conf = 0; if (conf > 1) conf /= 100;
   return { verdict: v, confidence: Math.max(0, Math.min(1, conf)), summary: String(d.what_is_happening || '').slice(0, 400), reason: String(d.reason || '').slice(0, 400) };
@@ -911,10 +938,20 @@ async function verifyAlert(a, manual) {
   const t0 = performance.now();
   try {
     const { b64, used } = await contactSheet(a);
-    const body = { model: VER.model, stream: false, format: 'json', options: { temperature: 0, num_predict: 200 }, messages: [{ role: 'user', content: verifyPrompt(a, used), images: [b64] }] };
-    const r = await fetch(VER.url + '/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-    if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + (await r.text()).slice(0, 120));
-    const j = await r.json(); const v = parseVerdict(j.message?.content || '');
+    const msg = { role: 'user', content: verifyPrompt(a, used), images: [b64] };
+    const base = { model: VER.model, stream: false, format: VERDICT_SCHEMA, keep_alive: '10m', options: { temperature: 0, num_predict: 600 }, messages: [msg] };
+    let r = await fetch(VER.url + '/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...base, think: false }) });
+    if (!r.ok) {
+      const err = (await r.text()).slice(0, 200);
+      // Older Ollama builds, and non-thinking models, reject the `think` field: retry without it.
+      if (/think/i.test(err)) r = await fetch(VER.url + '/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(base) });
+      if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + err);
+    }
+    const j = await r.json();
+    // A thinking model can put the answer in `thinking` and leave `content` empty.
+    const txt = (j.message?.content || '').trim() || (j.message?.thinking || '').trim();
+    if (!txt) throw new Error(`the model replied with no text (done_reason: ${j.done_reason || 'unknown'}). Try a larger reply limit or a non-thinking model.`);
+    const v = parseVerdict(txt);
     Object.assign(a, { ai_verdict: v.verdict, ai_confidence: v.confidence, ai_summary: v.summary, ai_reason: v.reason, ai_model: VER.model, ai_ms: Math.round(performance.now() - t0) });
     renderVerStatus(VER.model + ' · ready', 'b-confirmed');
   } catch (e) { Object.assign(a, { ai_verdict: 'error', ai_confidence: null, ai_summary: '', ai_reason: 'verifier unavailable: ' + e.message, ai_model: VER.model }); if (manual) alert('AI second opinion failed: ' + e.message); }

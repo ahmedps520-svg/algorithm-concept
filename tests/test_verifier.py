@@ -66,6 +66,32 @@ def test_verify_now_attaches_verdict_without_touching_status(store, clock):
     assert seen == [out] and len(fake.calls) == 2
 
 
+def test_thinking_model_with_empty_content_is_still_parsed(store, clock):
+    """qwen3-vl reasons first. If a build ignores think=false the answer arrives in
+    `thinking` with `content` empty, which used to surface as 'no JSON verdict in reply:'."""
+    a = Alert("r1", "fighting", [1, 2], 0.8, "high", 3.0, 110.0, 110.0)
+    store.upsert(a)
+    sent = []
+
+    def thinking(url, body, timeout):
+        sent.append(body)
+        return {"message": {"content": "", "thinking": 'Let me look. {"verdict":"likely_real","what_is_happening":"two students grappling","confidence":0.75,"reason":"sustained contact"}'}}
+
+    v = OllamaVerifier(VerifierConfig(enabled=True, tile_width=64), store, transport=thinking, clock=clock)
+    out = v.verify_now(a, frames())
+    assert out.ai_verdict == "likely_real" and out.ai_confidence == 0.75
+    assert sent[0]["think"] is False and sent[0]["options"]["num_predict"] >= 400
+
+
+def test_empty_reply_is_reported_as_error_with_reason(store, clock):
+    a = Alert("r1", "sleeping", [4], 0.9, "high", 20.0, 110.0, 110.0)
+    store.upsert(a)
+    v = OllamaVerifier(VerifierConfig(enabled=True, tile_width=64), store,
+                       transport=lambda u, b, t: {"message": {"content": "  "}, "done_reason": "length"}, clock=clock)
+    out = v.verify_now(a, frames())
+    assert out.ai_verdict == "error" and "no text" in out.ai_reason and "length" in out.ai_reason
+
+
 def test_verifier_error_is_recorded_not_raised(store, clock):
     a = Alert("r1", "sleeping", [4], 0.9, "high", 20.0, 110.0, 110.0)
     store.upsert(a)

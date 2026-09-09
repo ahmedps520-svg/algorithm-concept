@@ -153,10 +153,13 @@ class SleepingClassifier:
         mean_motion = sum(o.motion for o in recent) / max(len(recent), 1)
         mean_head = sum(o.head_motion for o in recent) / max(len(recent), 1)
         still = mean_motion <= self.t.max_motion and mean_head <= self.t.max_head_motion
+        awake = cur.eyes_visible and (cur.rel_drop < self.t.awake_relative_drop if cur.rel_drop is not None
+                                      else cur.head_drop <= self.t.awake_head_drop)
+        near_shoulders = cur.head_drop >= self.t.min_drop_for_relative
         down_abs = cur.head_drop >= self.t.head_below_shoulders_ratio
-        down_rel = cur.rel_drop is not None and cur.rel_drop >= self.t.relative_drop
-        tilted = cur.head_tilt is not None and abs(cur.head_tilt) >= self.t.tilt_deg
-        res = self.gate.update(ts, (down_abs or down_rel or tilted) and still)
+        down_rel = near_shoulders and cur.rel_drop is not None and cur.rel_drop >= self.t.relative_drop
+        tilted = near_shoulders and cur.head_tilt is not None and abs(cur.head_tilt) >= self.t.tilt_deg
+        res = self.gate.update(ts, (not awake) and (down_abs or down_rel or tilted) and still)
         if not res.triggered:
             return None
         if down_abs:
@@ -164,7 +167,7 @@ class SleepingClassifier:
         elif down_rel:
             cue, depth = "head dropped vs own baseline", min(1.0, cur.rel_drop / 0.7)
         else:
-            cue, depth = "head tilted", 0.6
+            cue, depth = "head tilted onto hand/shoulder", 0.6
         conf = min(1.0, 0.4 + 0.3 * res.active_fraction + 0.3 * depth)
         return BehaviorEvent(
             room_id="", behavior=self.behavior, track_ids=[me.track_id], ts=ts, score=conf,
