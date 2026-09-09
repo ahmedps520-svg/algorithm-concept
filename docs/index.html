@@ -376,13 +376,22 @@ const loadZones = room => { try { room.zones = JSON.parse(ls.get(room.zoneKey) |
 let camCount = 0, detectorPromise = null;
 async function loadDetector() {
   if (typeof tf === 'undefined' || typeof poseDetection === 'undefined') throw new Error('the TensorFlow.js scripts from cdn.jsdelivr.net could not be downloaded');
+  $('#modelstatus').textContent = 'starting backend…';
+  let backend = 'webgl';
+  try { await tf.setBackend('webgl'); await tf.ready(); }
+  catch (e) { console.warn('webgl backend failed, using cpu', e); backend = 'cpu'; await tf.setBackend('cpu'); await tf.ready(); }
   $('#modelstatus').textContent = 'loading pose model…';
-  await tf.setBackend('webgl'); await tf.ready();
-  const det = await poseDetection.createDetector(poseDetection.SupportedModels.MoveNet,
-    { modelType: poseDetection.movenet.modelType.MULTIPOSE_LIGHTNING, enableTracking: true, trackerType: poseDetection.TrackerType.BoundingBox });
-  $('#modelstatus').textContent = 'MoveNet MultiPose · webgl';
+  const cfg = { modelType: poseDetection.movenet.modelType.MULTIPOSE_LIGHTNING, enableTracking: true, trackerType: poseDetection.TrackerType.BoundingBox };
+  let det, lastErr;
+  for (const modelUrl of [undefined, 'https://www.kaggle.com/models/google/movenet/tfJs/multipose-lightning/1/model.json?tfjs-format=file']) {
+    try { det = await poseDetection.createDetector(poseDetection.SupportedModels.MoveNet, modelUrl ? { ...cfg, modelUrl } : cfg); break; }
+    catch (e) { lastErr = e; console.warn('model load failed from', modelUrl || 'default url', e); }
+  }
+  if (!det) throw lastErr;
+  $('#modelstatus').textContent = `MoveNet MultiPose · ${backend}`;
   return det;
 }
+const sleep = ms => new Promise(r => setTimeout(r, ms));
 async function addCamera(deviceId) {
   camCount++;
   const id = 'cam_' + camCount, name = `Camera ${camCount}` + (deviceId ? '' : ' (default)');
@@ -394,8 +403,12 @@ async function addCamera(deviceId) {
   try {
     stream = await navigator.mediaDevices.getUserMedia({ video: { deviceId: deviceId ? { exact: deviceId } : undefined, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 15 } }, audio: false });
   } catch (e) { status(`Camera access failed: ${e.name}. ${e.name === 'NotAllowedError' ? 'Allow camera permission for this site and retry.' : e.message}`, () => { room.el.querySelector('.room-close').click(); addCamera(deviceId); }); return; }
-  const video = Object.assign(document.createElement('video'), { srcObject: stream, muted: true, playsInline: true, autoplay: true });
-  await new Promise(res => { video.onloadedmetadata = () => { video.play().then(res, res); }; });
+  const video = Object.assign(document.createElement('video'), { muted: true, playsInline: true, autoplay: true });
+  video.setAttribute('playsinline', ''); video.srcObject = stream;
+  await new Promise(res => { if (video.readyState >= 1) return res(); video.onloadedmetadata = res; setTimeout(res, 3000); });
+  try { await video.play(); } catch {}
+  if (!video.videoWidth) await new Promise(res => { const t = setInterval(() => { if (video.videoWidth) { clearInterval(t); res(); } }, 50); setTimeout(() => { clearInterval(t); res(); }, 5000); });
+  if (!video.videoWidth) { status('The camera started but delivers no frames. Close other apps using the camera and retry.', () => { room.el.querySelector('.room-close').click(); addCamera(deviceId); }); return; }
   room.srcW = video.videoWidth; room.srcH = video.videoHeight;
   room.canvas.width = Math.min(640, room.srcW); room.canvas.height = Math.round(room.canvas.width * room.srcH / room.srcW);
   const track = stream.getVideoTracks()[0];
@@ -411,16 +424,20 @@ async function addCamera(deviceId) {
   // Each camera keeps its own tracker state, so its own detector instance.
   let own = detector;
   if (ROOMS.filter(r => r.kind === 'live').length > 1) own = await loadDetector();
-  const c = room.canvas.getContext('2d');
+  const c = room.canvas.getContext('2d', { willReadFrequently: true });
+  const W = room.canvas.width, H = room.canvas.height, TARGET_MS = 100;   // ~10 fps: plenty for these behaviors, and leaves the UI responsive
   (async function loop() {
     while (room.active) {
-      if (video.readyState < 2) { await new Promise(r => setTimeout(r, 50)); continue; }
+      const t0 = performance.now();
+      if (video.readyState < 2 || document.hidden) { await sleep(100); continue; }
+      c.drawImage(video, 0, 0, W, H);                    // detect on the downscaled frame, not the 720p/1080p source
       let poses = [];
-      try { poses = await own.estimatePoses(video, { maxPoses: 6, flipHorizontal: false }); } catch (e) { console.warn(e); }
+      try { poses = await own.estimatePoses(room.canvas, { maxPoses: 6, flipHorizontal: false }); }
+      catch (e) { console.warn('estimatePoses failed', e); room.statusEl.textContent = 'detector error: ' + (e.message || e); await sleep(500); continue; }
       const ts = now(), dets = [], kps = new Map();
       for (const p of poses) {
         if ((p.score ?? 1) < 0.2 || p.id == null) continue;
-        const kp = p.keypoints.map(k => [k.x / room.srcW, k.y / room.srcH, k.score ?? 0]);
+        const kp = p.keypoints.map(k => [k.x / W, k.y / H, k.score ?? 0]);
         const good = kp.filter(k => k[2] >= 0.3); if (good.length < 4) continue;
         let x1 = Math.min(...good.map(k => k[0])), x2 = Math.max(...good.map(k => k[0])), y1 = Math.min(...good.map(k => k[1])), y2 = Math.max(...good.map(k => k[1]));
         const pw = (x2 - x1) * 0.15, ph = (y2 - y1) * 0.12; x1 -= pw; x2 += pw; y1 -= ph; y2 += ph * 0.5;   // keypoints sit inside the body; pad to a box
@@ -434,9 +451,11 @@ async function addCamera(deviceId) {
         dets.push({ id: p.id, cx: (x1 + x2) / 2, cy: (y1 + y2) / 2, w: Math.max(x2 - x1, 0.02), h: Math.max(y2 - y1, 0.02), headDrop, armsUp });
         kps.set(p.id, kp);
       }
-      c.drawImage(video, 0, 0, room.canvas.width, room.canvas.height);
       drawOverlays(room, dets, kps);
       processFrame(room, dets, ts);
+      // Always hand control back to the browser so the page stays responsive even when the
+      // GPU read-back above completes synchronously.
+      await sleep(Math.max(16, TARGET_MS - (performance.now() - t0)));
     }
   })();
 }
