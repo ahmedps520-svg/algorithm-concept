@@ -7,6 +7,7 @@ sustained gate is open; the alert engine decides whether that becomes a new aler
 from __future__ import annotations
 
 import math
+from pathlib import Path
 from collections import deque
 from typing import Protocol
 
@@ -150,17 +151,28 @@ class SleepingClassifier:
             return None
         recent = me.recent(1.0)
         mean_motion = sum(o.motion for o in recent) / max(len(recent), 1)
-        active = cur.head_drop >= self.t.head_below_shoulders_ratio and mean_motion <= self.t.max_motion
-        res = self.gate.update(ts, active)
+        mean_head = sum(o.head_motion for o in recent) / max(len(recent), 1)
+        still = mean_motion <= self.t.max_motion and mean_head <= self.t.max_head_motion
+        down_abs = cur.head_drop >= self.t.head_below_shoulders_ratio
+        down_rel = cur.rel_drop is not None and cur.rel_drop >= self.t.relative_drop
+        tilted = cur.head_tilt is not None and abs(cur.head_tilt) >= self.t.tilt_deg
+        res = self.gate.update(ts, (down_abs or down_rel or tilted) and still)
         if not res.triggered:
             return None
-        depth = min(1.0, cur.head_drop / max(self.t.head_below_shoulders_ratio * 3, 1e-3))
+        if down_abs:
+            cue, depth = "nose below shoulders", min(1.0, cur.head_drop / max(self.t.head_below_shoulders_ratio * 3, 1e-3))
+        elif down_rel:
+            cue, depth = "head dropped vs own baseline", min(1.0, cur.rel_drop / 0.7)
+        else:
+            cue, depth = "head tilted", 0.6
         conf = min(1.0, 0.4 + 0.3 * res.active_fraction + 0.3 * depth)
         return BehaviorEvent(
             room_id="", behavior=self.behavior, track_ids=[me.track_id], ts=ts, score=conf,
             sustained_s=res.sustained_s,
-            evidence={"head_drop": round(cur.head_drop, 2), "motion": round(mean_motion, 3),
-                      "active_fraction": round(res.active_fraction, 2)},
+            evidence={"cue": cue, "head_drop": round(cur.head_drop, 2),
+                      "rel_drop": None if cur.rel_drop is None else round(cur.rel_drop, 2),
+                      "tilt_deg": None if cur.head_tilt is None else round(cur.head_tilt),
+                      "motion": round(mean_motion, 3), "active_fraction": round(res.active_fraction, 2)},
         )
 
 
@@ -253,9 +265,13 @@ class TalkingClassifier:
 
 
 def build_classifiers(t: BehaviorThresholds, zones: list[SeatZone], fps: float) -> list[Classifier]:
-    return [
+    out: list[Classifier] = [
         FightingClassifier(t.fighting, fps),
         SleepingClassifier(t.sleeping, fps),
         OutOfSeatClassifier(t.out_of_seat, zones, fps),
         TalkingClassifier(t.talking, fps),
     ]
+    if t.learned.enabled and Path(t.learned.weights_path).exists():
+        from .learned import LearnedClassifier, load_model
+        out.append(LearnedClassifier(t.learned, load_model(t.learned.weights_path), zones, fps))
+    return out

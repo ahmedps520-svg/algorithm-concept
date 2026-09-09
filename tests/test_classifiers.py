@@ -97,8 +97,23 @@ def test_head_down_and_still_fires_sleeping():
     hit = first(run(seated_actors(), script, 40, th), Behavior.SLEEPING)
     assert hit is not None
     ts, ev = hit
-    assert abs(ts - (2 + th.sleeping.min_duration_s)) < 1.0
+    assert abs(ts - (2 + th.sleeping.min_duration_s)) < 2.0   # the baseline cue can fire a little before the absolute one
     assert ev.track_ids == [4]
+
+
+def test_head_slumping_toward_shoulders_fires_sleeping_via_baseline():
+    """Eye-level webcam: the nose never goes below the shoulder line, but the head height
+    collapses to ~45 % of this person's own upright baseline."""
+    def script(t, a):
+        if t >= 6:
+            a[3].head_drop, a[3].jitter = 0.28, 0.0005     # nose_y = top+0.08h+0.098h < shoulders at top+0.25h
+    th = BehaviorThresholds()
+    hit = first(run(seated_actors(), script, 45, th), Behavior.SLEEPING)
+    assert hit is not None
+    ts, ev = hit
+    assert ev.evidence["cue"] == "head dropped vs own baseline"
+    assert ev.evidence["head_drop"] < th.sleeping.head_below_shoulders_ratio
+    assert abs(ts - (6 + th.sleeping.min_duration_s)) < 1.5
 
 
 def test_head_down_but_fidgeting_does_not_fire_sleeping():

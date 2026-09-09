@@ -4,11 +4,23 @@ Multi-classroom video monitoring backend with **human-reviewed** behavior alerts
 
 **Live demo of the staff dashboard using your own webcam:**
 https://ahmedps520-svg.github.io/algorithm-concept/ — source in `docs/index.html`, deployed by
-`.github/workflows/pages.yml`. Click "Add camera", allow camera access, draw a seat zone around
-yourself. Person detection, tracking and pose run in the browser (MoveNet MultiPose via
-TensorFlow.js); the classifiers, alert debounce, review workflow and clip logic are the same as
-the Python backend. Video never leaves the device. A "Simulated room" button adds a scripted
-room so every alert type can be seen without acting it out.
+`.github/workflows/pages.yml`. Click "Add camera" and allow camera access; a seat zone is
+created around you once you sit still. Person detection, tracking and pose run in the browser
+(MoveNet MultiPose via TensorFlow.js), lip movement comes from MediaPipe Face Landmarker, and the
+classifiers, alert debounce, review workflow and clip logic are the same as the Python backend.
+Video never leaves the device. A "Simulated room" button adds a scripted room so every alert
+type can be seen without acting it out.
+
+**Teach it on real people.** The demo has a training panel: record 6-second labelled examples
+of each behavior (and "normal") on your camera, press Train, and a classifier is fitted in the
+browser to those examples (held-out accuracy shown) and runs alongside the rules. Only pose
+feature vectors are stored, never video. Export the set and train the backend model with the
+same features:
+
+```bash
+python scripts/train_behavior.py classroom-training-2026-09-09.json -o data/behavior_model.json
+# then in config/system.yaml: default_thresholds.learned.enabled: true
+```
 
 The demo deploys from `claude/trusting-lamport-a07jjo`, the repository's default branch. The
 `github-pages` environment only accepts deployments from the default branch, so a push of
@@ -90,6 +102,19 @@ Any field of any behavior can be overridden per room; unspecified fields inherit
 See `classroom_monitor/config.py` for every knob and its documentation.
 
 ## Behavior classifiers and their guard rails
+
+Two layers run side by side and feed the same alert keys (so they merge, never duplicate):
+
+* **Rules** (below): hand-set geometric cues behind sustained gates. Work with zero training.
+* **Learned** (`behavior/learned.py`): 2-second windows of 12 per-frame cues (head drop,
+  head height vs. this person's own upright baseline, tilt, yaw, torso motion, head motion,
+  arm raise, lip movement, in-zone, nearest-neighbour gap, partner motion, pose present),
+  summarised as mean/std/min/max, into class-weighted softmax regression. Trained on examples
+  recorded in the demo (or exported from it) with `scripts/train_behavior.py`. The model's
+  prediction also sits behind a sustained gate, so a single confident frame never alerts.
+
+Neither layer is, or can be, "perfect": that is why every alert goes to a human for review.
+More recorded examples, from more people and camera angles, is what moves accuracy.
 
 All classifiers feed a per-frame boolean into a `SustainedCondition` gate
 (`behavior/sustain.py`). The gate opens only when the condition has held for

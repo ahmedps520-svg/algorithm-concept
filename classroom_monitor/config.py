@@ -48,12 +48,26 @@ class FightingThresholds(BaseModel):
 
 
 class SleepingThresholds(BaseModel):
+    """Head down AND still, sustained. "Head down" is any of three cues so it works from a
+    high ceiling camera and from a near eye-level one:
+      * nose below the shoulder line (absolute)
+      * nose-to-shoulder height collapsed versus this person's own upright baseline
+        (relative; learned over the first seconds of the track)
+      * head tilted onto a hand or shoulder (ear line vs horizontal)
+    """
+
     enabled: bool = True
     # Head (nose) must sit below the shoulder line by this fraction of torso height.
     head_below_shoulders_ratio: float = 0.15
-    # Mean motion over the last second (box widths/s) below this counts as still.
+    # Or: head height (nose above shoulders, in shoulder widths) dropped by this fraction of baseline.
+    relative_drop: float = 0.4
+    # Or: ear line tilted at least this many degrees from horizontal.
+    tilt_deg: float = 25.0
+    # Mean torso motion over the last second (box widths/s) below this counts as still.
     # Detector box jitter alone is ~0.1-0.2, so keep this comfortably above that.
     max_motion: float = 0.3
+    # Mean nose motion over the last second (shoulder widths/s) below this counts as still.
+    max_head_motion: float = 0.6
     # Must hold for this long.
     min_duration_s: float = 20.0
     window_s: float = 25.0
@@ -96,11 +110,25 @@ class TalkingThresholds(BaseModel):
     max_confidence: float = 0.35
 
 
+class LearnedThresholds(BaseModel):
+    """Optional learned classifier (see behavior/learned.py), trained on examples recorded in
+    the browser demo and exported, via ``scripts/train_behavior.py``. Runs alongside the rules;
+    both feed the same alert keys, so they merge rather than duplicate."""
+
+    enabled: bool = False
+    weights_path: Path = Path("data/behavior_model.json")
+    min_prob: float = 0.7
+    window_s: float = 10.0
+    min_active_fraction: float = 0.6
+    min_duration_s: dict[str, float] = Field(default_factory=lambda: {"fighting": 3.0, "sleeping": 20.0, "out_of_seat": 8.0, "talking": 5.0})
+
+
 class BehaviorThresholds(BaseModel):
     fighting: FightingThresholds = FightingThresholds()
     sleeping: SleepingThresholds = SleepingThresholds()
     out_of_seat: OutOfSeatThresholds = OutOfSeatThresholds()
     talking: TalkingThresholds = TalkingThresholds()
+    learned: LearnedThresholds = LearnedThresholds()
 
 
 # --------------------------------------------------------------------------------------

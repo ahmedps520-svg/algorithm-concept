@@ -27,6 +27,12 @@ class Observation:
     arms_up: bool | None         # any wrist above its shoulder
     head_yaw: float | None       # ear asymmetry proxy for looking sideways (-1..1)
     pose_available: bool
+    head_height: float | None = None   # (shoulder_y - nose_y) / shoulder_w; camera-distance invariant
+    head_tilt: float | None = None     # ear line vs horizontal, degrees
+    nose: tuple[float, float] | None = None   # normalised nose position
+    shoulder_w: float | None = None    # normalised shoulder width
+    head_motion: float = 0.0           # nose displacement, shoulder widths per second
+    rel_drop: float | None = None      # 1 - head_height / this track's upright baseline
 
 
 class TrackState:
@@ -38,10 +44,23 @@ class TrackState:
         self.obs: deque[Observation] = deque()
         self.last_seen: float = 0.0
         self.first_seen: float | None = None
+        self.head_base: float | None = None    # upright head height, learned over the first frames
+        self.head_base_n: int = 0
 
     def push(self, o: Observation) -> None:
         if self.first_seen is None:
             self.first_seen = o.ts
+        prev = self.latest
+        if prev is not None and o.nose is not None and prev.nose is not None:
+            dt = o.ts - prev.ts
+            if dt > 1e-3:
+                unit = max(o.shoulder_w or o.w * 0.6, 1e-3)
+                o.head_motion = math.hypot(o.nose[0] - prev.nose[0], o.nose[1] - prev.nose[1]) / unit / dt
+        if o.head_height is not None and o.head_drop is not None and o.head_drop < 0.05 and self.head_base_n < 30:
+            self.head_base = o.head_height if self.head_base is None else self.head_base + 0.2 * (o.head_height - self.head_base)
+            self.head_base_n += 1
+        if o.head_height is not None and self.head_base is not None and self.head_base_n >= 10:
+            o.rel_drop = 1.0 - o.head_height / max(self.head_base, 1e-3)
         self.obs.append(o)
         self.last_seen = o.ts
         while self.obs and o.ts - self.obs[0].ts > self.window_s:
@@ -74,6 +93,7 @@ def observe(person: TrackedPerson, ts: float, frame_w: int, frame_h: int,
             motion = math.hypot(cx - prev.cx, cy - prev.cy) / max(w, 1e-3) / dt
 
     head_drop = arms_up = head_yaw = None
+    head_height = head_tilt = nose_n = shoulder_w = None
     pose_ok = False
     kp = person.keypoints
     if kp is not None:
@@ -87,6 +107,10 @@ def observe(person: TrackedPerson, ts: float, frame_w: int, frame_h: int,
             else:
                 torso = max(b.h * 0.35, 1.0)
             head_drop = (nose[1] - shoulder_y) / torso
+            sw = max(abs(rs[0] - ls[0]), 1.0)
+            head_height = (shoulder_y - nose[1]) / sw
+            shoulder_w = sw / frame_w
+            nose_n = (nose[0] / frame_w, nose[1] / frame_h)
             pose_ok = True
         lw, rw = kp.pt(L_WRIST), kp.pt(R_WRIST)
         if ls and rs:
@@ -96,5 +120,7 @@ def observe(person: TrackedPerson, ts: float, frame_w: int, frame_h: int,
         if nose and le and re:
             span = max(abs(re[0] - le[0]), 1.0)
             head_yaw = ((nose[0] - le[0]) - (re[0] - nose[0])) / span
+            head_tilt = math.degrees(math.atan2(re[1] - le[1], re[0] - le[0]))
 
-    return Observation(ts, cx, cy, w, h, fx, fy, motion, vx, vy, head_drop, arms_up, head_yaw, pose_ok)
+    return Observation(ts, cx, cy, w, h, fx, fy, motion, vx, vy, head_drop, arms_up, head_yaw, pose_ok,
+                       head_height=head_height, head_tilt=head_tilt, nose=nose_n, shoulder_w=shoulder_w)
