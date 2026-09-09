@@ -1,0 +1,11 @@
+id: room_102
+name: "Room 102 – Grade 8 Science"
+camera:
+  url: synthetic
+seat_zones:
+  - {id: R1, x1: 0.10, y1: 0.40, x2: 0.45, y2: 0.95}
+  - {id: R2, x1: 0.55, y1: 0.40, x2: 0.90, y2: 0.95}
+thresholds:
+  fighting:
+    min_duration_s: 4.0       # lab benches; more movement is normal here
+    min_active_fraction: 0.7

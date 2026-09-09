@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Classroom Monitor – Staff Dashboard</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { --bg:#0f1115; --panel:#181b22; --line:#2a2f3a; --fg:#e6e8ee; --muted:#8b93a7;
+          --new:#e5484d; --ack:#f5a524; --ok:#30a46c; --low:#6b7280; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:14px/1.45 system-ui, sans-serif; background:var(--bg); color:var(--fg); }
+  header { display:flex; align-items:center; gap:16px; padding:10px 16px; border-bottom:1px solid var(--line); background:var(--panel); }
+  header h1 { font-size:16px; margin:0; }
+  header .spacer { flex:1; }
+  header input { background:#0f1115; color:var(--fg); border:1px solid var(--line); padding:6px 8px; border-radius:6px; width:200px; }
+  main { display:grid; grid-template-columns: 1fr 420px; gap:12px; padding:12px; height:calc(100vh - 52px); }
+  section { background:var(--panel); border:1px solid var(--line); border-radius:8px; overflow:auto; }
+  section h2 { font-size:13px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); margin:0; padding:10px 12px; border-bottom:1px solid var(--line); position:sticky; top:0; background:var(--panel); }
+  .left { display:grid; grid-template-rows: 1fr 260px; gap:12px; overflow:hidden; }
+  .grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap:10px; padding:10px; }
+  .room { position:relative; background:#000; border-radius:6px; overflow:hidden; aspect-ratio:16/9; border:2px solid transparent; }
+  .room.alerting { border-color:var(--new); }
+  .room img { width:100%; height:100%; object-fit:cover; display:block; }
+  .room .label { position:absolute; left:0; right:0; bottom:0; padding:4px 8px; background:rgba(0,0,0,.6); font-size:12px; display:flex; justify-content:space-between; }
+  .room .offline { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:var(--muted); }
+  .badge { display:inline-block; padding:1px 7px; border-radius:10px; font-size:11px; font-weight:600; }
+  .b-new { background:var(--new); } .b-acknowledged { background:var(--ack); color:#000; }
+  .b-confirmed { background:var(--ok); } .b-dismissed { background:var(--low); }
+  .b-high { background:#7f1d1d; } .b-medium { background:#78350f; } .b-low { background:#374151; }
+  .alert { padding:10px 12px; border-bottom:1px solid var(--line); }
+  .alert .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .alert .meta { color:var(--muted); font-size:12px; margin-top:2px; }
+  .alert .actions { margin-top:8px; display:flex; gap:6px; flex-wrap:wrap; }
+  button { background:#242938; color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:5px 10px; cursor:pointer; font-size:13px; }
+  button:hover { background:#2e3446; } button.primary { background:#2f5fd8; border-color:#2f5fd8; }
+  button.danger { background:#6b2124; border-color:#6b2124; } button.ok { background:#1f5f3d; border-color:#1f5f3d; }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  textarea { width:100%; background:#0f1115; color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:6px; font:inherit; margin-top:6px; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th, td { text-align:left; padding:6px 10px; border-bottom:1px solid var(--line); white-space:nowrap; }
+  tr.clickable:hover { background:#1f2430; cursor:pointer; }
+  .filters { display:flex; gap:8px; padding:8px 12px; flex-wrap:wrap; }
+  .filters select, .filters input { background:#0f1115; color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:5px; }
+  dialog { background:var(--panel); color:var(--fg); border:1px solid var(--line); border-radius:10px; width:min(900px, 95vw); }
+  dialog img { width:100%; background:#000; border-radius:6px; }
+  .clipbar { display:flex; gap:8px; align-items:center; margin-top:8px; }
+  .clipbar input[type=range] { flex:1; }
+  .empty { padding:24px; text-align:center; color:var(--muted); }
+  .warn { font-size:12px; color:var(--ack); padding:8px 12px; border-bottom:1px solid var(--line); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Classroom Monitor</h1>
+  <span id="conn" class="badge b-low">connecting…</span>
+  <span class="spacer"></span>
+  <label>Staff ID <input id="staff" placeholder="e.g. j.smith" title="Required to acknowledge or review alerts"></label>
+</header>
+<main>
+  <div class="left">
+    <section>
+      <h2>Live rooms</h2>
+      <div id="grid" class="grid"></div>
+    </section>
+    <section>
+      <h2>Incident log</h2>
+      <div class="filters">
+        <select id="f-status"><option value="">any status</option><option>new</option><option>acknowledged</option><option>confirmed</option><option>dismissed</option></select>
+        <select id="f-room"><option value="">any room</option></select>
+        <select id="f-behavior"><option value="">any behavior</option><option>fighting</option><option>sleeping</option><option>out_of_seat</option><option>talking</option></select>
+        <input id="f-since" type="datetime-local" title="since">
+        <button id="f-apply">Search</button>
+      </div>
+      <table><thead><tr><th>Time</th><th>Room</th><th>Behavior</th><th>Conf</th><th>Status</th><th>Reviewed by</th><th>Clip</th></tr></thead>
+      <tbody id="log"></tbody></table>
+    </section>
+  </div>
+  <section>
+    <h2>Alert queue <span id="qcount" class="badge b-new" style="display:none"></span></h2>
+    <div class="warn">Alerts are suggestions from an automated detector. A staff member must acknowledge and review each one; nothing is flagged actionable until a person confirms it.</div>
+    <div id="queue"></div>
+  </section>
+</main>
+
+<dialog id="clipdlg">
+  <div id="cliphead"></div>
+  <img id="clipimg" alt="clip frame">
+  <div class="clipbar">
+    <button id="clipplay">▶</button>
+    <input id="clipseek" type="range" min="0" max="0" value="0">
+    <span id="cliptime" style="width:80px;text-align:right"></span>
+    <button onclick="document.getElementById('clipdlg').close()">Close</button>
+  </div>
+</dialog>
+
+<script>
+const $ = s => document.querySelector(s);
+const staff = () => $('#staff').value.trim();
+$('#staff').value = localStorage.getItem('staff') || '';
+$('#staff').addEventListener('input', e => localStorage.setItem('staff', e.target.value));
+const fmt = ts => new Date(ts * 1000).toLocaleString();
+const badge = (cls, txt) => `<span class="badge b-${cls}">${txt}</span>`;
+const nice = b => b.replace('_', ' ');
+let rooms = [];
+
+async function api(path, opts = {}) {
+  const r = await fetch(path, { ...opts, headers: { 'Content-Type': 'application/json', 'X-Staff-Id': staff(), ...(opts.headers || {}) } });
+  if (!r.ok) { const t = await r.text(); let m = t; try { m = JSON.parse(t).detail; } catch {} throw new Error(m); }
+  return r.json();
+}
+
+// ------------------------------------------------------------ live grid
+async function loadRooms() {
+  rooms = await api('/api/rooms');
+  const sel = $('#f-room');
+  if (sel.options.length === 1) rooms.forEach(r => sel.add(new Option(r.name, r.room_id)));
+  const grid = $('#grid');
+  if (!grid.children.length) {
+    grid.innerHTML = rooms.map(r => `
+      <div class="room" id="room-${r.room_id}">
+        <img src="/api/rooms/${r.room_id}/preview?t=0" onerror="this.style.visibility='hidden'">
+        <div class="offline" style="display:none">offline</div>
+        <div class="label"><span>${r.name}</span><span class="stats"></span></div>
+      </div>`).join('');
+  }
+  rooms.forEach(r => {
+    const el = $(`#room-${r.room_id}`);
+    el.classList.toggle('alerting', r.open_alerts > 0);
+    el.querySelector('.offline').style.display = r.online ? 'none' : 'flex';
+    el.querySelector('.stats').textContent = r.online ? `${r.people} ppl · ${r.fps} fps` + (r.open_alerts ? ` · ${r.open_alerts} open` : '') : (r.error || 'offline');
+  });
+}
+function refreshPreviews() {
+  document.querySelectorAll('.room img').forEach(img => { img.style.visibility = ''; img.src = img.src.split('?')[0] + '?t=' + Date.now(); });
+}
+
+// ------------------------------------------------------------ queue
+async function loadQueue() {
+  const q = await api('/api/alerts/queue');
+  $('#qcount').style.display = q.length ? '' : 'none'; $('#qcount').textContent = q.length;
+  const el = $('#queue');
+  if (!q.length) { el.innerHTML = '<div class="empty">No alerts awaiting review.</div>'; return; }
+  el.innerHTML = q.map(a => `
+    <div class="alert" data-id="${a.id}">
+      <div class="row"><b>${nice(a.behavior)}</b> ${badge(a.confidence, a.confidence)} ${badge(a.status, a.status)} <span style="color:var(--muted)">${roomName(a.room_id)}</span></div>
+      <div class="meta">${fmt(a.first_ts)} · sustained ${a.sustained_s.toFixed(1)}s · seen ${a.occurrences}× · tracks ${a.track_ids.join(', ')}${a.behavior === 'talking' ? ' · <b>video-only, low confidence</b>' : ''}</div>
+      ${a.status === 'acknowledged' ? `<div class="meta">acknowledged by ${a.acknowledged_by}</div><textarea rows="2" placeholder="Review notes (optional)"></textarea>` : ''}
+      <div class="actions">
+        ${a.clip_id ? `<button onclick="openClip('${a.clip_id}')">View clip</button>` : '<button disabled>clip pending…</button>'}
+        ${a.status === 'new' ? `<button class="primary" onclick="ack('${a.id}')">Acknowledge</button>` :
+          `<button class="ok" onclick="review('${a.id}','confirm',this)">Confirm concern</button><button class="danger" onclick="review('${a.id}','dismiss',this)">Dismiss</button>`}
+      </div>
+    </div>`).join('');
+}
+const roomName = id => (rooms.find(r => r.room_id === id) || { name: id }).name;
+async function ack(id) {
+  if (!staff()) return alert('Enter your staff ID first.');
+  try { await api(`/api/alerts/${id}/ack`, { method: 'POST' }); await loadQueue(); } catch (e) { alert(e.message); }
+}
+async function review(id, outcome, btn) {
+  if (!staff()) return alert('Enter your staff ID first.');
+  const notes = btn.closest('.alert').querySelector('textarea')?.value || '';
+  try { await api(`/api/alerts/${id}/review`, { method: 'POST', body: JSON.stringify({ outcome, notes }) }); await loadQueue(); await loadLog(); } catch (e) { alert(e.message); }
+}
+
+// ------------------------------------------------------------ log
+async function loadLog() {
+  const p = new URLSearchParams();
+  for (const [k, id] of [['status', '#f-status'], ['room_id', '#f-room'], ['behavior', '#f-behavior']]) { const v = $(id).value; if (v) p.set(k, v); }
+  const since = $('#f-since').value; if (since) p.set('since', new Date(since).getTime() / 1000);
+  const rows = await api('/api/alerts?' + p);
+  $('#log').innerHTML = rows.length ? rows.map(a => `
+    <tr class="clickable" onclick="${a.clip_id ? `openClip('${a.clip_id}')` : ''}">
+      <td>${fmt(a.first_ts)}</td><td>${roomName(a.room_id)}</td><td>${nice(a.behavior)}</td>
+      <td>${badge(a.confidence, a.confidence)}</td><td>${badge(a.status, a.status)}</td>
+      <td>${a.reviewed_by || a.acknowledged_by || ''}</td><td>${a.clip_id ? badge(a.clip_flag === 'actionable' ? 'confirmed' : 'low', a.clip_flag) : '—'}</td>
+    </tr>`).join('') : '<tr><td colspan="7" class="empty">No incidents match.</td></tr>';
+}
+$('#f-apply').onclick = loadLog;
+
+// ------------------------------------------------------------ clip viewer
+let clip = null, clipTimer = null, clipIdx = 0;
+async function openClip(id) {
+  try { clip = await api(`/api/clips/${id}`); } catch (e) { return alert(e.message); }
+  const dlg = $('#clipdlg');
+  $('#cliphead').innerHTML = `<b>${nice(clip.index?.behavior || '')}</b> · ${roomName(clip.room_id)} · ${fmt(clip.start_ts)} → ${fmt(clip.end_ts)} (${clip.frames} frames)`;
+  if (!clip.index) { $('#clipimg').replaceWith(Object.assign(document.createElement('video'), { id: 'clipimg', src: clip.video, controls: true, style: 'width:100%' })); dlg.showModal(); return; }
+  $('#clipseek').max = clip.index.frames.length - 1; clipIdx = 0; showFrame(0); dlg.showModal(); play();
+}
+function showFrame(i) {
+  clipIdx = i; const f = clip.index.frames[i];
+  $('#clipimg').src = `/api/clips/${clip.id}/${f.file}`; $('#clipseek').value = i;
+  $('#cliptime').textContent = (f.offset_s >= 0 ? '+' : '') + f.offset_s.toFixed(1) + 's';
+}
+function play() { clearInterval(clipTimer); $('#clipplay').textContent = '⏸';
+  clipTimer = setInterval(() => { if (clipIdx + 1 >= clip.index.frames.length) return pause(); showFrame(clipIdx + 1); }, 1000 / (clip.index.fps || 10)); }
+function pause() { clearInterval(clipTimer); clipTimer = null; $('#clipplay').textContent = '▶'; }
+$('#clipplay').onclick = () => clipTimer ? pause() : play();
+$('#clipseek').oninput = e => { pause(); showFrame(+e.target.value); };
+$('#clipdlg').addEventListener('close', pause);
+
+// ------------------------------------------------------------ websocket
+function connect() {
+  const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws');
+  ws.onopen = () => { $('#conn').textContent = 'live'; $('#conn').className = 'badge b-confirmed'; };
+  ws.onmessage = () => { loadQueue(); loadRooms(); loadLog(); };
+  ws.onclose = () => { $('#conn').textContent = 'reconnecting…'; $('#conn').className = 'badge b-new'; setTimeout(connect, 2000); };
+  setInterval(() => ws.readyState === 1 && ws.send('ping'), 15000);
+}
+
+(async () => {
+  await loadRooms(); await loadQueue(); await loadLog(); connect();
+  setInterval(loadRooms, 3000); setInterval(loadQueue, 5000); setInterval(refreshPreviews, 500);
+})();
+</script>
+</body>
+</html>

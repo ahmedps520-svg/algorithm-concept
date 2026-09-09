@@ -1,0 +1,17 @@
+id: room_101
+name: "Room 101 – Grade 7 Math"
+camera:
+  url: synthetic            # replace with rtsp://user:pass@10.0.1.101:554/Streaming/Channels/101
+  transport: tcp
+  scale: 0.5
+# Seat zones in normalised (0-1) frame coordinates. Draw these once per camera placement.
+seat_zones:
+  - {id: A1, x1: 0.05, y1: 0.35, x2: 0.25, y2: 0.60}
+  - {id: A2, x1: 0.30, y1: 0.35, x2: 0.50, y2: 0.60}
+  - {id: A3, x1: 0.55, y1: 0.35, x2: 0.75, y2: 0.60}
+  - {id: B1, x1: 0.05, y1: 0.65, x2: 0.25, y2: 0.95}
+  - {id: B2, x1: 0.30, y1: 0.65, x2: 0.50, y2: 0.95}
+  - {id: B3, x1: 0.55, y1: 0.65, x2: 0.75, y2: 0.95}
+thresholds:
+  out_of_seat:
+    min_duration_s: 10.0      # this room has a pencil sharpener at the back; be lenient
