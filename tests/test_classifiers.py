@@ -78,6 +78,17 @@ def test_two_people_walking_together_do_not_fire_fighting():
     assert first(run(actors, script, 12, zones=[]), Behavior.FIGHTING) is None
 
 
+def test_walking_past_seated_students_does_not_fire_fighting():
+    actors = seated_actors()
+
+    def script(t, a):
+        if t < 0.2:
+            a[2].move_to(0.12, 0.85)       # from the top-right seat, brushing past 2, 1, 4 and 5
+        if 12 <= t < 12.2:
+            a[2].move_to(*SEATS[2])
+    assert first(run(actors, script, 30), Behavior.FIGHTING) is None
+
+
 def test_head_down_and_still_fires_sleeping():
     def script(t, a):
         if t >= 2:

@@ -1,0 +1,477 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Classroom Monitor – Staff Dashboard (Demo)</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { --bg:#0f1115; --panel:#181b22; --line:#2a2f3a; --fg:#e6e8ee; --muted:#8b93a7;
+          --new:#e5484d; --ack:#f5a524; --ok:#30a46c; --low:#6b7280; --accent:#2f5fd8; }
+  * { box-sizing:border-box; }
+  html, body { height:100%; }
+  body { margin:0; font:14px/1.45 system-ui, -apple-system, Segoe UI, sans-serif; background:var(--bg); color:var(--fg); }
+  header { display:flex; align-items:center; gap:14px; padding:10px 16px; border-bottom:1px solid var(--line); background:var(--panel); flex-wrap:wrap; }
+  header h1 { font-size:16px; margin:0; }
+  header .spacer { flex:1; }
+  header input, header select { background:#0f1115; color:var(--fg); border:1px solid var(--line); padding:6px 8px; border-radius:6px; }
+  header input { width:170px; }
+  .clock { font-variant-numeric:tabular-nums; color:var(--muted); }
+  main { display:grid; grid-template-columns: minmax(0,1fr) 400px; gap:12px; padding:12px; min-height:calc(100vh - 54px); }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  section { background:var(--panel); border:1px solid var(--line); border-radius:8px; overflow:auto; }
+  section h2 { font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); margin:0; padding:10px 12px; border-bottom:1px solid var(--line); position:sticky; top:0; background:var(--panel); z-index:1; display:flex; align-items:center; gap:8px; }
+  .left { display:flex; flex-direction:column; gap:12px; min-width:0; }
+  .grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap:10px; padding:10px; }
+  .room { position:relative; background:#000; border-radius:6px; overflow:hidden; border:2px solid transparent; }
+  .room.alerting { border-color:var(--new); box-shadow:0 0 0 2px rgba(229,72,77,.25); }
+  .room canvas { width:100%; display:block; aspect-ratio:16/9; }
+  .room .label { position:absolute; left:0; right:0; bottom:0; padding:4px 8px; background:rgba(0,0,0,.6); font-size:12px; display:flex; justify-content:space-between; }
+  .room .rec { position:absolute; top:6px; left:8px; font-size:11px; color:#fff; background:rgba(229,72,77,.85); padding:1px 6px; border-radius:4px; display:none; }
+  .room.recording .rec { display:block; }
+  .badge { display:inline-block; padding:1px 7px; border-radius:10px; font-size:11px; font-weight:600; white-space:nowrap; }
+  .b-new { background:var(--new); } .b-acknowledged { background:var(--ack); color:#000; }
+  .b-confirmed { background:var(--ok); } .b-dismissed { background:var(--low); }
+  .b-high { background:#7f1d1d; } .b-medium { background:#78350f; } .b-low { background:#374151; }
+  .b-demo { background:#3b2f7a; }
+  .alert { padding:10px 12px; border-bottom:1px solid var(--line); animation: pop .25s ease-out; }
+  @keyframes pop { from { background:#3a1e20; } to { background:transparent; } }
+  .alert .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .alert .meta { color:var(--muted); font-size:12px; margin-top:2px; }
+  .alert .actions { margin-top:8px; display:flex; gap:6px; flex-wrap:wrap; }
+  button { background:#242938; color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:5px 10px; cursor:pointer; font-size:13px; }
+  button:hover { background:#2e3446; } button.primary { background:var(--accent); border-color:var(--accent); }
+  button.danger { background:#6b2124; border-color:#6b2124; } button.ok { background:#1f5f3d; border-color:#1f5f3d; }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  button.small { padding:2px 8px; font-size:12px; }
+  textarea { width:100%; background:#0f1115; color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:6px; font:inherit; margin-top:6px; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th, td { text-align:left; padding:6px 10px; border-bottom:1px solid var(--line); white-space:nowrap; }
+  tr.clickable:hover { background:#1f2430; cursor:pointer; }
+  .filters { display:flex; gap:8px; padding:8px 12px; flex-wrap:wrap; }
+  .filters select { background:#0f1115; color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:5px; }
+  dialog { background:var(--panel); color:var(--fg); border:1px solid var(--line); border-radius:10px; width:min(820px, 95vw); padding:16px; }
+  dialog::backdrop { background:rgba(0,0,0,.6); }
+  dialog img { width:100%; background:#000; border-radius:6px; aspect-ratio:16/9; }
+  .clipbar { display:flex; gap:8px; align-items:center; margin-top:8px; }
+  .clipbar input[type=range] { flex:1; }
+  .empty { padding:24px; text-align:center; color:var(--muted); }
+  .note { font-size:12px; color:var(--muted); padding:8px 12px; border-bottom:1px solid var(--line); }
+  .note b { color:var(--ack); }
+  .timeline { padding:10px 12px; }
+  .tl-track { position:relative; height:26px; background:#0f1115; border-radius:6px; margin:6px 0 2px; overflow:hidden; }
+  .tl-ev { position:absolute; top:4px; height:18px; border-radius:4px; font-size:10px; line-height:18px; padding:0 5px; color:#fff; overflow:hidden; white-space:nowrap; }
+  .tl-cursor { position:absolute; top:0; bottom:0; width:2px; background:#fff; }
+  .tl-name { font-size:11px; color:var(--muted); }
+  .kv { display:grid; grid-template-columns:auto 1fr; gap:2px 12px; font-size:12px; margin-top:8px; color:var(--muted); }
+  .kv b { color:var(--fg); font-weight:500; }
+  details { padding:8px 12px; font-size:13px; color:var(--muted); }
+  details summary { cursor:pointer; color:var(--fg); }
+  details ol { padding-left:18px; margin:6px 0; }
+  code { background:#0f1115; padding:1px 5px; border-radius:4px; font-size:12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Classroom Monitor</h1>
+  <span class="badge b-demo">DEMO · simulated feeds</span>
+  <span class="clock" id="clock">t = 0.0s</span>
+  <select id="speed" title="Simulation speed"><option value="1">1× speed</option><option value="2">2×</option><option value="4" selected>4×</option><option value="8">8×</option></select>
+  <button id="restart" class="small">↻ Restart scenario</button>
+  <span class="spacer"></span>
+  <label>Staff ID <input id="staff" placeholder="e.g. j.smith" title="Required to acknowledge or review alerts"></label>
+</header>
+<main>
+  <div class="left">
+    <section>
+      <h2>Live rooms <span class="badge b-low" id="roomcount"></span></h2>
+      <div id="grid" class="grid"></div>
+      <div class="timeline" id="timeline"></div>
+    </section>
+    <section>
+      <h2>Incident log</h2>
+      <div class="filters">
+        <select id="f-status"><option value="">any status</option><option>new</option><option>acknowledged</option><option>confirmed</option><option>dismissed</option></select>
+        <select id="f-room"><option value="">any room</option></select>
+        <select id="f-behavior"><option value="">any behavior</option><option value="fighting">fighting</option><option value="sleeping">sleeping</option><option value="out_of_seat">out of seat</option></select>
+      </div>
+      <div style="overflow:auto"><table><thead><tr><th>Time</th><th>Room</th><th>Behavior</th><th>Conf</th><th>Status</th><th>Reviewed by</th><th>Clip</th><th>Clip expires</th></tr></thead>
+      <tbody id="log"></tbody></table></div>
+    </section>
+    <section>
+      <details>
+        <summary>How this demo works</summary>
+        <ol>
+          <li>Each room is a simulated 720p camera feed rendered in the browser. Boxes and track ids are what the detector + tracker (YOLOv8-pose + ByteTrack in the real backend) would output.</li>
+          <li>Every track feeds per-frame cues (motion, proximity, relative velocity, arm raise, head-below-shoulders, foot outside seat zone) into a <b>sustained-condition gate</b>: a behavior fires only after it has held for several seconds at a high fraction of frames. A single frame can never alert.</li>
+          <li>The alert engine merges repeats into the open alert and applies per-track (120 s) and per-room (30 s) cooldowns.</li>
+          <li>On alert, a clip is saved from a 10 s pre-roll ring buffer plus 10 s post-roll. Nothing is recorded continuously.</li>
+          <li>A staff member must <b>acknowledge</b> then <b>confirm or dismiss</b>. Only a human confirm marks a clip actionable. The system never takes any action itself.</li>
+          <li>Retention is driven by the human outcome: unreviewed clips are deleted after 48 h, dismissed after 24 h, confirmed kept 90 days.</li>
+        </ol>
+        <div>Same UI, thresholds and workflow as the Python backend in this repository; the video and detections here are synthetic. Talking detection is off: from video alone at this distance it is low confidence and needs an audio channel.</div>
+      </details>
+    </section>
+  </div>
+  <section>
+    <h2>Alert queue <span id="qcount" class="badge b-new" style="display:none"></span></h2>
+    <div class="note">Alerts are suggestions from an automated detector. A staff member must <b>acknowledge</b> and <b>review</b> each one; nothing is flagged actionable until a person confirms it.</div>
+    <div id="queue"></div>
+  </section>
+</main>
+
+<dialog id="clipdlg">
+  <div id="cliphead"></div>
+  <img id="clipimg" alt="clip frame">
+  <div class="clipbar">
+    <button id="clipplay">▶</button>
+    <input id="clipseek" type="range" min="0" max="0" value="0">
+    <span id="cliptime" style="width:70px;text-align:right;font-variant-numeric:tabular-nums"></span>
+    <button onclick="document.getElementById('clipdlg').close()">Close</button>
+  </div>
+  <div class="kv" id="clipmeta"></div>
+</dialog>
+
+<script>
+// =====================================================================================
+// Config (mirrors config/system.yaml)
+// =====================================================================================
+const FPS = 10;
+const TH = {
+  fighting: { window: 4, minDur: 3, minFrac: 0.6, motionSpike: 0.6, proximity: 0.6, relative: 0.5, partnerMotion: 0.3, armFrames: 6, frameScore: 0.6, floor: 0.5 },
+  sleeping: { window: 25, minDur: 12, minFrac: 0.85, headDrop: 0.15, maxMotion: 0.3 },   // 20 s in prod; 12 s here so the demo moves
+  out_of_seat: { window: 10, minDur: 8, minFrac: 0.8, margin: 0.03 },
+};
+const DEBOUNCE = { perTrack: 120, perRoom: 30 };
+const CLIP = { pre: 10, post: 10 };
+const RETENTION = { unreviewed_h: 48, dismissed_h: 24, actionable_d: 90 };
+const $ = s => document.querySelector(s);
+const staff = () => $('#staff').value.trim();
+try { $('#staff').value = localStorage.getItem('staff') || ''; } catch {}
+$('#staff').addEventListener('input', e => { try { localStorage.setItem('staff', e.target.value); } catch {} });
+const nice = b => b.replace('_', ' ');
+const badge = (cls, txt) => `<span class="badge b-${cls}">${txt}</span>`;
+const fmtT = t => `${Math.floor(t / 60)}:${(t % 60).toFixed(1).padStart(4, '0')}`;
+const wall = t => new Date(BASE_WALL + t * 1000).toLocaleTimeString();
+const BASE_WALL = Date.now();
+const gauss = (() => { let s; return sd => { let u = 0, v = 0; while (!u) u = Math.random(); while (!v) v = Math.random(); return sd * Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); }; })();
+
+// =====================================================================================
+// Sustained-condition gate (port of behavior/sustain.py)
+// =====================================================================================
+class Sustain {
+  constructor(w, d, f) { this.w = w; this.d = d; this.f = f; this.hist = []; this.run = null; }
+  update(ts, active) {
+    this.hist.push([ts, active]);
+    while (this.hist.length && ts - this.hist[0][0] > this.w) this.hist.shift();
+    if (active && this.run === null) this.run = ts;
+    if (this.run === null) return { trig: false, sustained: 0, frac: 0 };
+    const inRun = this.hist.filter(h => h[0] >= this.run);
+    const frac = inRun.filter(h => h[1]).length / inRun.length;
+    if (frac < this.f) { this.run = active ? ts : null; return { trig: false, sustained: 0, frac }; }
+    const sustained = ts - this.run;
+    return { trig: sustained >= this.d && inRun.length >= 2, sustained, frac };
+  }
+}
+
+// =====================================================================================
+// Synthetic actors (port of ingestion/source.py Actor)
+// =====================================================================================
+class Actor {
+  constructor(id, x, y) { Object.assign(this, { id, x, y, w: 0.11, h: 0.36, headDrop: 0, armsUp: false, jitter: 0.002, speed: 0.3, target: null, rx: x, ry: y }); }
+  moveTo(x, y) { this.target = [x, y]; }
+  step(dt) {
+    if (this.target) {
+      const [tx, ty] = this.target, dx = tx - this.x, dy = ty - this.y, dist = Math.hypot(dx, dy), m = this.speed * dt;
+      if (dist <= m) { this.x = tx; this.y = ty; this.target = null; } else { this.x += dx / dist * m; this.y += dy / dist * m; }
+    }
+    this.rx = Math.min(0.98, Math.max(0.02, this.x + gauss(this.jitter)));
+    this.ry = Math.min(0.98, Math.max(0.02, this.y + gauss(this.jitter)));
+  }
+  box() { return [this.rx - this.w / 2, this.ry - this.h / 2, this.rx + this.w / 2, this.ry + this.h / 2]; }
+}
+
+// =====================================================================================
+// Behavior engine (port of behavior/classifiers.py, simplified)
+// =====================================================================================
+class TrackState {
+  constructor(id, zones) {
+    this.id = id; this.obs = []; this.age = 0; this.homeZone = null; this.zones = zones;
+    this.gates = { fighting: new Sustain(TH.fighting.window, TH.fighting.minDur, TH.fighting.minFrac),
+                   sleeping: new Sustain(TH.sleeping.window, TH.sleeping.minDur, TH.sleeping.minFrac),
+                   out_of_seat: new Sustain(TH.out_of_seat.window, TH.out_of_seat.minDur, TH.out_of_seat.minFrac) };
+    this.armFrames = 0; this.scores = []; this.partner = null;
+  }
+  observe(a, ts) {
+    const prev = this.obs[this.obs.length - 1];
+    const o = { ts, cx: a.rx, cy: a.ry, w: a.w, h: a.h, fx: a.rx, fy: a.ry + a.h / 2, vx: 0, vy: 0, motion: 0,
+                headDrop: a.headDrop * 0.51, armsUp: a.armsUp };
+    if (prev) { const dt = ts - prev.ts; if (dt > 0) { o.vx = (o.cx - prev.cx) / dt; o.vy = (o.cy - prev.cy) / dt; o.motion = Math.hypot(o.cx - prev.cx, o.cy - prev.cy) / o.w / dt; } }
+    this.obs.push(o); while (this.obs.length && ts - this.obs[0].ts > 25) this.obs.shift();
+    this.age++;
+    return o;
+  }
+  zoneAt(x, y) { const m = TH.out_of_seat.margin; return this.zones.find(z => x >= z.x1 - m && x <= z.x2 + m && y >= z.y1 - m && y <= z.y2 + m) || null; }
+  evaluate(others, ts) {
+    const cur = this.obs[this.obs.length - 1], events = [];
+    if (this.age < 3) return events;
+    // nearest neighbour gap in box widths (for evidence) + engagement partner = moving-most person within reach
+    let gap = Infinity; const cands = [];
+    for (const o of others) { const p = o.obs[o.obs.length - 1]; if (!p) continue;
+      const dx = Math.max(0, Math.abs(cur.cx - p.cx) - (cur.w + p.w) / 2), dy = Math.max(0, Math.abs(cur.cy - p.cy) - (cur.h + p.h) / 2);
+      const g = Math.hypot(dx, dy) / Math.min(cur.w, p.w); if (g < gap) gap = g; if (g <= TH.fighting.proximity) cands.push(o); }
+    const partner = cands.length ? cands.reduce((b, o) => o.obs[o.obs.length - 1].motion > b.obs[b.obs.length - 1].motion ? o : b) : null;
+    // --- fighting
+    const near = !!partner;
+    const motion = cur.motion >= TH.fighting.motionSpike;
+    let relative = false;
+    if (near) { const p = partner.obs[partner.obs.length - 1];
+      // velocity *difference* (walking together cancels) AND the partner must be moving too (walking past a seated student is not a fight)
+      relative = Math.hypot(cur.vx - p.vx, cur.vy - p.vy) / cur.w >= TH.fighting.relative && p.motion >= TH.fighting.partnerMotion; }
+    this.armFrames = cur.armsUp ? this.armFrames + 1 : 0;
+    const arms = this.armFrames >= TH.fighting.armFrames;
+    const score = 0.3 * motion + 0.2 * near + 0.3 * relative + 0.2 * arms;
+    this.scores.push(score); if (this.scores.length > TH.fighting.window * FPS) this.scores.shift();
+    const active = score >= TH.fighting.frameScore;
+    if (active && partner) this.partner = partner.id;
+    let r = this.gates.fighting.update(ts, active);
+    if (r.trig) {
+      const mean = this.scores.reduce((a, b) => a + b, 0) / this.scores.length;
+      const conf = Math.max(TH.fighting.floor, Math.min(1, 0.5 * mean + 0.5 * r.frac + Math.min(0.2, 0.05 * (r.sustained - TH.fighting.minDur))));
+      events.push({ behavior: 'fighting', tracks: [this.id, this.partner].filter(x => x != null), score: conf, sustained: r.sustained,
+                    evidence: { active_fraction: r.frac.toFixed(2), motion: cur.motion.toFixed(2), gap_box_widths: gap.toFixed(2), arm_raise_frames: this.armFrames } });
+    }
+    // --- sleeping
+    const recent = this.obs.filter(o => o.ts >= ts - 1), meanMotion = recent.reduce((a, o) => a + o.motion, 0) / recent.length;
+    r = this.gates.sleeping.update(ts, cur.headDrop >= TH.sleeping.headDrop && meanMotion <= TH.sleeping.maxMotion);
+    if (r.trig) events.push({ behavior: 'sleeping', tracks: [this.id], score: Math.min(1, 0.4 + 0.3 * r.frac + 0.3 * Math.min(1, cur.headDrop / 0.45)), sustained: r.sustained,
+                              evidence: { head_drop: cur.headDrop.toFixed(2), motion: meanMotion.toFixed(3), active_fraction: r.frac.toFixed(2) } });
+    // --- out of seat
+    const z = this.zoneAt(cur.fx, cur.fy);
+    if (z && !this.homeZone) this.homeZone = z.id;
+    if (this.homeZone) {
+      r = this.gates.out_of_seat.update(ts, !z);
+      if (r.trig) events.push({ behavior: 'out_of_seat', tracks: [this.id], score: Math.min(1, 0.5 + 0.5 * r.frac), sustained: r.sustained,
+                                evidence: { home_zone: this.homeZone, active_fraction: r.frac.toFixed(2) } });
+    }
+    return events;
+  }
+}
+
+// =====================================================================================
+// Rooms + scenarios
+// =====================================================================================
+const SCENARIO_LEN = 110;
+function once(room, tag, t, when, fn) { if (!room.fired.has(tag) && t >= when) { room.fired.add(tag); fn(); } }
+
+const ROOMS = [
+  { id: 'room_101', name: 'Room 101 – Grade 7 Math', seats: [[0.22, 0.5], [0.48, 0.5], [0.74, 0.5], [0.48, 0.88]],
+    timeline: [['out of seat', 10, 40, '#c2410c'], ['sleeping', 20, 110, '#4338ca'], ['horseplay (no alert)', 50, 51.5, '#6b7280'], ['fight', 68, 76, '#b91c1c']],
+    script(t, a, room) {
+      once(room, 'leave', t, 10, () => a[2].moveTo(0.90, 0.22));
+      once(room, 'back', t, 40, () => a[2].moveTo(...room.seats[2]));
+      if (t >= 20) { a[3].headDrop = Math.min(1, (t - 20) / 3); a[3].jitter = 0.0005; }
+      once(room, 'hp1', t, 50, () => { a[0].jitter = a[1].jitter = 0.03; a[0].armsUp = a[1].armsUp = true; a[0].moveTo(0.32, 0.5); a[1].moveTo(0.39, 0.5); });
+      once(room, 'hp2', t, 51.5, () => { a[0].jitter = a[1].jitter = 0.002; a[0].armsUp = a[1].armsUp = false; a[0].moveTo(...room.seats[0]); a[1].moveTo(...room.seats[1]); });
+      once(room, 'f1', t, 68, () => { a[0].moveTo(0.32, 0.5); a[1].moveTo(0.39, 0.5); a[0].jitter = a[1].jitter = 0.025; a[0].armsUp = a[1].armsUp = true; });
+      once(room, 'f2', t, 76, () => { a[0].moveTo(...room.seats[0]); a[1].moveTo(...room.seats[1]); a[0].jitter = a[1].jitter = 0.002; a[0].armsUp = a[1].armsUp = false; });
+    } },
+  { id: 'room_102', name: 'Room 102 – Grade 8 Science', seats: [[0.25, 0.6], [0.5, 0.6], [0.75, 0.6]],
+    timeline: [['sleeping', 30, 110, '#4338ca'], ['out of seat', 55, 110, '#c2410c'], ['horseplay (no alert)', 85, 86.5, '#6b7280']],
+    script(t, a, room) {
+      if (t >= 30) { a[1].headDrop = Math.min(1, (t - 30) / 3); a[1].jitter = 0.0005; }
+      once(room, 'leave', t, 55, () => a[2].moveTo(0.10, 0.14));
+      once(room, 'hp1', t, 85, () => { a[0].jitter = 0.03; a[0].armsUp = true; a[0].moveTo(0.40, 0.6); a[2].moveTo(0.47, 0.6); a[2].jitter = 0.03; });
+      once(room, 'hp2', t, 86.5, () => { a[0].jitter = a[2].jitter = 0.002; a[0].armsUp = false; a[0].moveTo(...room.seats[0]); a[2].moveTo(0.10, 0.14); });
+    } },
+];
+
+function resetRoom(room) {
+  room.actors = room.seats.map(([x, y], i) => new Actor(i + 1, x, y));
+  room.zones = room.seats.map(([x, y], i) => ({ id: 'S' + (i + 1), x1: x - 0.11, y1: y - 0.2, x2: x + 0.11, y2: y + 0.2 }));
+  room.tracks = new Map(); room.fired = new Set(); room.ring = []; room.recorders = []; room.alertTracks = new Map();
+}
+
+// =====================================================================================
+// Alert engine (port of alerts/engine.py)
+// =====================================================================================
+const alerts = []; const lastByKey = new Map(), lastByRoomBeh = new Map(), openByKey = new Map();
+let seq = 1;
+function handleEvent(room, ev, ts) {
+  const key = `${room.id}|${ev.behavior}|${[...ev.tracks].sort().join(',')}`, rb = `${room.id}|${ev.behavior}`;
+  const openId = openByKey.get(key);
+  if (openId) { const a = alerts.find(x => x.id === openId);
+    if (a && (a.status === 'new' || a.status === 'acknowledged')) { a.occurrences++; a.last_ts = ts; a.sustained = Math.max(a.sustained, ev.sustained); if (ev.score > a.score) { a.score = ev.score; a.confidence = conf(ev.score); } return null; }
+    openByKey.delete(key); }
+  if (lastByKey.has(key) && ts - lastByKey.get(key) < DEBOUNCE.perTrack) return null;
+  if (lastByRoomBeh.has(rb) && ts - lastByRoomBeh.get(rb) < DEBOUNCE.perRoom) return null;
+  const a = { id: 'a' + String(seq++).padStart(4, '0'), room_id: room.id, behavior: ev.behavior, track_ids: [...ev.tracks].sort(), score: ev.score, confidence: conf(ev.score),
+              sustained: ev.sustained, first_ts: ts, last_ts: ts, evidence: ev.evidence, status: 'new', occurrences: 1, clip: null, clip_flag: 'unreviewed',
+              acknowledged_by: null, reviewed_by: null, notes: '' };
+  alerts.unshift(a); lastByKey.set(key, ts); lastByRoomBeh.set(rb, ts); openByKey.set(key, a.id);
+  return a;
+}
+const conf = s => s >= 0.75 ? 'high' : s >= 0.5 ? 'medium' : 'low';
+function ack(id) {
+  if (!staff()) return alert('Enter your staff ID first.');
+  const a = alerts.find(x => x.id === id); if (a.status !== 'new') return;
+  a.status = 'acknowledged'; a.acknowledged_by = staff(); a.acknowledged_at = simT; renderQueue(); renderLog();
+}
+function review(id, outcome, btn) {
+  if (!staff()) return alert('Enter your staff ID first.');
+  const a = alerts.find(x => x.id === id);
+  if (a.status === 'new') return alert('Alert must be acknowledged before it can be reviewed.');   // enforced server-side too (HTTP 409)
+  if (a.status !== 'acknowledged') return;
+  a.reviewed_by = staff(); a.reviewed_at = simT; a.notes = btn.closest('.alert').querySelector('textarea')?.value || '';
+  if (outcome === 'confirm') { a.status = 'confirmed'; a.clip_flag = 'actionable'; } else { a.status = 'dismissed'; a.clip_flag = 'dismissed'; }
+  openByKey.delete(`${a.room_id}|${a.behavior}|${a.track_ids.join(',')}`);
+  renderQueue(); renderLog();
+}
+function expiry(a) {
+  if (!a.clip) return '—';
+  const base = a.status === 'confirmed' || a.status === 'dismissed' ? a.reviewed_at : a.clip.created;
+  const hours = a.status === 'confirmed' ? RETENTION.actionable_d * 24 : a.status === 'dismissed' ? RETENTION.dismissed_h : RETENTION.unreviewed_h;
+  return new Date(BASE_WALL + base * 1000 + hours * 3600e3).toLocaleString();
+}
+
+// =====================================================================================
+// Rendering of the simulated camera frame
+// =====================================================================================
+function drawRoom(room, canvas, ts) {
+  const c = canvas.getContext('2d'), W = canvas.width, H = canvas.height;
+  c.fillStyle = '#23262e'; c.fillRect(0, 0, W, H);
+  c.fillStyle = '#2e323c'; c.fillRect(0, 0, W, H * 0.3);                    // wall
+  c.fillStyle = '#f1f1f1'; c.fillRect(W * 0.3, H * 0.05, W * 0.4, H * 0.2);  // whiteboard
+  for (const z of room.zones) { c.fillStyle = '#4a3b2a'; c.fillRect(z.x1 * W + 4, (z.y2 - 0.1) * H, (z.x2 - z.x1) * W - 8, 0.09 * H); }  // desks
+  c.strokeStyle = 'rgba(96,165,250,.35)'; c.setLineDash([4, 4]);
+  for (const z of room.zones) c.strokeRect(z.x1 * W, z.y1 * H, (z.x2 - z.x1) * W, (z.y2 - z.y1) * H);
+  c.setLineDash([]);
+  for (const a of room.actors) {
+    const cx = a.rx * W, cy = a.ry * H, w = a.w * W, h = a.h * H, top = cy - h / 2;
+    const shoulderY = top + 0.25 * h, hipY = top + 0.6 * h, noseY = top + 0.1 * h + a.headDrop * 0.35 * h;
+    c.strokeStyle = '#dcd6c8'; c.lineWidth = 3; c.lineCap = 'round';
+    c.beginPath(); c.moveTo(cx, shoulderY); c.lineTo(cx, hipY); c.stroke();
+    c.beginPath(); c.moveTo(cx - 0.35 * w, shoulderY); c.lineTo(cx + 0.35 * w, shoulderY); c.stroke();
+    const wy = a.armsUp ? top + 0.02 * h : hipY;
+    c.beginPath(); c.moveTo(cx - 0.35 * w, shoulderY); c.lineTo(cx - 0.55 * w, wy); c.moveTo(cx + 0.35 * w, shoulderY); c.lineTo(cx + 0.55 * w, wy); c.stroke();
+    c.beginPath(); c.moveTo(cx - 0.2 * w, hipY); c.lineTo(cx - 0.25 * w, top + h); c.moveTo(cx + 0.2 * w, hipY); c.lineTo(cx + 0.25 * w, top + h); c.stroke();
+    c.fillStyle = '#e8c9a0'; c.beginPath(); c.arc(cx, noseY, 0.09 * h, 0, Math.PI * 2); c.fill();
+  }
+  // detections overlay
+  for (const a of room.actors) {
+    const [x1, y1, x2, y2] = a.box(), alerting = room.alertTracks.get(a.id) > ts - 2;
+    c.strokeStyle = alerting ? '#ef4444' : '#22c55e'; c.lineWidth = alerting ? 3 : 1.5;
+    c.strokeRect(x1 * W, y1 * H, (x2 - x1) * W, (y2 - y1) * H);
+    c.fillStyle = c.strokeStyle; c.fillRect(x1 * W, y1 * H - 12, 30, 12);
+    c.fillStyle = '#000'; c.font = 'bold 9px system-ui'; c.fillText('id ' + a.id, x1 * W + 3, y1 * H - 3);
+  }
+  c.fillStyle = 'rgba(255,255,255,.6)'; c.font = '10px monospace'; c.fillText(`${room.id.toUpperCase()}  ${wall(ts)}  1280x720`, 6, 12);
+}
+
+// =====================================================================================
+// Simulation loop
+// =====================================================================================
+let simT = 0, lastReal = performance.now(), acc = 0;
+function tick(room, ts) {
+  room.script(ts, room.actors, room);
+  for (const a of room.actors) a.step(1 / FPS);
+  for (const a of room.actors) { if (!room.tracks.has(a.id)) room.tracks.set(a.id, new TrackState(a.id, room.zones)); room.tracks.get(a.id).observe(a, ts); }
+  const canvas = room.canvas; drawRoom(room, canvas, ts);
+  const jpg = canvas.toDataURL('image/jpeg', 0.5);
+  room.ring.push({ ts, jpg }); while (room.ring.length > CLIP.pre * FPS) room.ring.shift();
+  for (const r of room.recorders) { r.frames.push({ ts, jpg }); if (ts - r.trigger >= CLIP.post) { r.done = true; r.alert.clip = { frames: r.frames, created: ts, trigger: r.trigger }; renderQueue(); renderLog(); } }
+  room.recorders = room.recorders.filter(r => !r.done);
+  const states = [...room.tracks.values()];
+  for (const st of states) {
+    for (const ev of st.evaluate(states.filter(o => o !== st), ts)) {
+      for (const id of ev.tracks) room.alertTracks.set(id, ts);
+      const a = handleEvent(room, ev, ts);
+      if (a) { room.recorders.push({ alert: a, trigger: ts, frames: [...room.ring], done: false }); renderQueue(); renderLog(); flash(room); }
+    }
+  }
+  const s = room.statusEl; s.textContent = `${room.actors.length} ppl · ${FPS} fps · ${room.recorders.length ? 'saving clip' : 'no recording'}`;
+  room.el.classList.toggle('recording', room.recorders.length > 0);
+  room.el.classList.toggle('alerting', alerts.some(a => a.room_id === room.id && (a.status === 'new' || a.status === 'acknowledged')));
+}
+function flash(room) { room.el.animate([{ boxShadow: '0 0 0 6px rgba(229,72,77,.6)' }, { boxShadow: '0 0 0 0 rgba(229,72,77,0)' }], 900); }
+function loop(now) {
+  const speed = +$('#speed').value; acc += (now - lastReal) / 1000 * speed; lastReal = now;
+  let steps = 0;
+  while (acc >= 1 / FPS && steps++ < 40) { acc -= 1 / FPS; simT += 1 / FPS; for (const r of ROOMS) tick(r, simT); }
+  if (simT >= SCENARIO_LEN) restart(false);
+  $('#clock').textContent = `scenario t = ${fmtT(simT)}`;
+  renderTimeline();
+  requestAnimationFrame(loop);
+}
+function restart(clearAlerts) {
+  simT = 0; acc = 0; for (const r of ROOMS) resetRoom(r);
+  lastByKey.clear(); lastByRoomBeh.clear(); openByKey.clear();
+  if (clearAlerts) { alerts.length = 0; seq = 1; renderQueue(); renderLog(); }
+}
+$('#restart').onclick = () => restart(true);
+
+// =====================================================================================
+// UI
+// =====================================================================================
+function buildGrid() {
+  $('#grid').innerHTML = ROOMS.map(r => `<div class="room" id="room-${r.id}"><canvas width="640" height="360"></canvas><span class="rec">● REC clip</span><div class="label"><span>${r.name}</span><span class="stats"></span></div></div>`).join('');
+  for (const r of ROOMS) { r.el = $(`#room-${r.id}`); r.canvas = r.el.querySelector('canvas'); r.statusEl = r.el.querySelector('.stats'); $('#f-room').add(new Option(r.name, r.id)); }
+  $('#roomcount').textContent = ROOMS.length + ' cameras';
+  $('#timeline').innerHTML = ROOMS.map(r => `<div class="tl-name">${r.name}</div><div class="tl-track" id="tl-${r.id}">${r.timeline.map(([n, s, e, col]) => `<div class="tl-ev" style="left:${s / SCENARIO_LEN * 100}%;width:${(e - s) / SCENARIO_LEN * 100}%;background:${col}" title="${n} ${s}–${e}s">${n}</div>`).join('')}<div class="tl-cursor"></div></div>`).join('');
+}
+function renderTimeline() { document.querySelectorAll('.tl-cursor').forEach(c => c.style.left = (simT / SCENARIO_LEN * 100) + '%'); }
+const roomName = id => ROOMS.find(r => r.id === id).name;
+function renderQueue() {
+  const q = alerts.filter(a => a.status === 'new').sort((a, b) => a.first_ts - b.first_ts).concat(alerts.filter(a => a.status === 'acknowledged').sort((a, b) => a.first_ts - b.first_ts));
+  $('#qcount').style.display = q.length ? '' : 'none'; $('#qcount').textContent = q.length;
+  const el = $('#queue');
+  if (!q.length) { el.innerHTML = '<div class="empty">No alerts awaiting review.<br><small>Watch the timeline: the first alert lands ~18 s into the scenario.</small></div>'; return; }
+  const open = new Set([...el.querySelectorAll('textarea')].map(t => [t.closest('.alert').dataset.id, t.value]));
+  const notes = Object.fromEntries(open);
+  el.innerHTML = q.map(a => `
+    <div class="alert" data-id="${a.id}">
+      <div class="row"><b>${nice(a.behavior)}</b> ${badge(a.confidence, a.confidence)} ${badge(a.status, a.status)} <span style="color:var(--muted)">${roomName(a.room_id)}</span></div>
+      <div class="meta">${wall(a.first_ts)} · sustained ${a.sustained.toFixed(1)}s · seen ${a.occurrences}× · tracks ${a.track_ids.join(', ')}</div>
+      <div class="meta">${Object.entries(a.evidence).map(([k, v]) => `${k}=${v}`).join(' · ')}</div>
+      ${a.status === 'acknowledged' ? `<div class="meta">acknowledged by <b>${a.acknowledged_by}</b></div><textarea rows="2" placeholder="Review notes (optional)">${notes[a.id] || ''}</textarea>` : ''}
+      <div class="actions">
+        ${a.clip ? `<button onclick="openClip('${a.id}')">View clip</button>` : '<button disabled>clip saving…</button>'}
+        ${a.status === 'new' ? `<button class="primary" onclick="ack('${a.id}')">Acknowledge</button>` :
+          `<button class="ok" onclick="review('${a.id}','confirm',this)">Confirm concern</button><button class="danger" onclick="review('${a.id}','dismiss',this)">Dismiss</button>`}
+      </div>
+    </div>`).join('');
+}
+function renderLog() {
+  const fs = $('#f-status').value, fr = $('#f-room').value, fb = $('#f-behavior').value;
+  const rows = alerts.filter(a => (!fs || a.status === fs) && (!fr || a.room_id === fr) && (!fb || a.behavior === fb));
+  $('#log').innerHTML = rows.length ? rows.map(a => `
+    <tr class="clickable" onclick="${a.clip ? `openClip('${a.id}')` : ''}">
+      <td>${wall(a.first_ts)}</td><td>${roomName(a.room_id)}</td><td>${nice(a.behavior)}</td>
+      <td>${badge(a.confidence, a.confidence)}</td><td>${badge(a.status, a.status)}</td>
+      <td>${a.reviewed_by || a.acknowledged_by || ''}</td><td>${a.clip ? badge(a.clip_flag === 'actionable' ? 'confirmed' : 'low', a.clip_flag) : 'saving…'}</td><td>${expiry(a)}</td>
+    </tr>`).join('') : '<tr><td colspan="8" class="empty">No incidents match.</td></tr>';
+}
+['#f-status', '#f-room', '#f-behavior'].forEach(s => $(s).onchange = renderLog);
+
+// clip viewer
+let clip = null, clipTimer = null, clipIdx = 0;
+function openClip(id) {
+  const a = alerts.find(x => x.id === id); if (!a.clip) return; clip = a;
+  const f = a.clip.frames;
+  $('#cliphead').innerHTML = `<b>${nice(a.behavior)}</b> · ${roomName(a.room_id)} · ${wall(f[0].ts)} → ${wall(f[f.length - 1].ts)} · ${f.length} frames (${CLIP.pre}s pre-roll + ${CLIP.post}s post-roll)`;
+  $('#clipmeta').innerHTML = `<span>Alert</span><b>${a.id} · ${badge(a.status, a.status)} · clip ${badge(a.clip_flag === 'actionable' ? 'confirmed' : 'low', a.clip_flag)}</b>
+    <span>Reviewer</span><b>${a.reviewed_by || a.acknowledged_by || '— (not yet reviewed)'}</b>
+    <span>Notes</span><b>${a.notes || '—'}</b>
+    <span>Retention</span><b>auto-deletes ${expiry(a)} (${a.status === 'confirmed' ? RETENTION.actionable_d + ' days, confirmed' : a.status === 'dismissed' ? RETENTION.dismissed_h + ' h, dismissed' : RETENTION.unreviewed_h + ' h, unreviewed'})</b>`;
+  $('#clipseek').max = f.length - 1; clipIdx = 0; showFrame(0); $('#clipdlg').showModal(); play();
+}
+function showFrame(i) { clipIdx = i; const f = clip.clip.frames[i]; $('#clipimg').src = f.jpg; $('#clipseek').value = i; const off = f.ts - clip.clip.trigger; $('#cliptime').textContent = (off >= 0 ? '+' : '') + off.toFixed(1) + 's'; }
+function play() { clearInterval(clipTimer); $('#clipplay').textContent = '⏸'; clipTimer = setInterval(() => { if (clipIdx + 1 >= clip.clip.frames.length) return pause(); showFrame(clipIdx + 1); }, 1000 / FPS); }
+function pause() { clearInterval(clipTimer); clipTimer = null; $('#clipplay').textContent = '▶'; }
+$('#clipplay').onclick = () => clipTimer ? pause() : play();
+$('#clipseek').oninput = e => { pause(); showFrame(+e.target.value); };
+$('#clipdlg').addEventListener('close', pause);
+
+buildGrid(); restart(true); requestAnimationFrame(loop);
+</script>
+</body>
+</html>

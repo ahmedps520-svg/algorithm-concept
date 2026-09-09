@@ -37,6 +37,9 @@ class FightingThresholds(BaseModel):
     # Relative speed between the two nearby tracks (box widths/s) above which they are "engaging".
     # Two people walking together share a velocity and score ~0 here; a scuffle scores high.
     relative_motion: float = 0.5
+    # The partner must also be moving at least this fast (box widths/s) for the relative-motion
+    # cue to count. Walking past a seated student produces high relative speed but a still partner.
+    partner_motion: float = 0.3
     # Wrist above shoulder counts as an arm raise; how many arm-raise frames are required.
     arm_raise_min_frames: int = 6
     # Per-frame score threshold (0-1) for a frame to count as active.

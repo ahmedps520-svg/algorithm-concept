@@ -2,6 +2,12 @@
 
 Multi-classroom video monitoring backend with **human-reviewed** behavior alerts for school staff.
 
+**Live demo of the staff dashboard (no backend, simulated feeds):**
+https://ahmedps520-svg.github.io/algorithm-concept/ — source in `docs/index.html`, deployed by
+`.github/workflows/pages.yml` on every push to `main`. It runs the same gate logic, thresholds
+and review workflow as the Python backend, with synthetic 720p rooms of 3-4 people rendered in
+the browser. Use the speed control to fast-forward the 110-second scenario.
+
 One fixed camera per room. A per-room pipeline detects and tracks people, estimates pose, runs
 rule-based behavior classifiers over sliding windows, and raises alerts to a staff dashboard.
 The system never takes action on its own: every alert must be acknowledged and reviewed by a

@@ -75,17 +75,23 @@ class FightingClassifier:
         if not self.t.enabled or me.latest is None:
             return None
         cur = me.latest
-        partner, gap = _nearest(cur, others)
-        near = partner is not None and gap <= self.t.proximity_box_widths
+        nearest, gap = _nearest(cur, others)
+        # Among people within reach, engage with the one moving most: in a scuffle both parties
+        # move, so a still bystander sitting next to the action is not picked as the partner.
+        candidates = [o for o in others if o.latest is not None
+                      and _gap_in_box_widths(cur, o.latest) <= self.t.proximity_box_widths]
+        partner = max(candidates, key=lambda o: o.latest.motion, default=None)
+        near = partner is not None
 
         motion = cur.motion >= self.t.motion_spike
         relative = False
-        if near and partner is not None and partner.latest is not None:
+        if near and partner.latest is not None:
             p = partner.latest
             # Velocity *difference*, so two people moving together (walking, carrying a table)
-            # score ~0 while two people moving against each other score high.
+            # score ~0 while two people moving against each other score high. The partner must
+            # also be moving: walking past a seated student is not an engagement.
             rel_speed = math.hypot(cur.vx - p.vx, cur.vy - p.vy) / max(cur.w, 1e-3)
-            relative = rel_speed >= self.t.relative_motion
+            relative = rel_speed >= self.t.relative_motion and p.motion >= self.t.partner_motion
 
         self._arm_frames = self._arm_frames + 1 if cur.arms_up else 0
         arms = self._arm_frames >= self.t.arm_raise_min_frames
@@ -117,7 +123,7 @@ class FightingClassifier:
             sustained_s=res.sustained_s,
             evidence={
                 "active_fraction": round(res.active_fraction, 2), "mean_frame_score": round(mean_score, 2),
-                "motion": round(cur.motion, 2), "gap_box_widths": round(gap, 2) if partner else None,
+                "motion": round(cur.motion, 2), "gap_box_widths": round(gap, 2) if nearest else None,
                 "arm_raise_frames": self._arm_frames,
             },
         )
