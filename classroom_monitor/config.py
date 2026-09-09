@@ -76,14 +76,19 @@ class OutOfSeatThresholds(BaseModel):
 class TalkingThresholds(BaseModel):
     """Video-only talking detection is LOW CONFIDENCE at classroom distances.
 
-    Disabled by default. When enabled it only ever produces ``LOW`` confidence events and
-    never flags a clip on its own. An audio channel (see README) is the way to make this
-    meaningful."""
+    At 540p from a ceiling camera a student's mouth is a handful of pixels, so lip motion is
+    not resolvable; the only usable cue is repeated head turning toward a neighbour. Events are
+    therefore hard-capped at ``max_confidence`` and can never reach HIGH, never flag a clip on
+    their own, and are meant as a nudge for a staff member to look, nothing more. Pair with a
+    per-room audio level channel before treating them as meaningful."""
 
-    enabled: bool = False
+    enabled: bool = True
     # Head-yaw change (normalised nose-to-ear asymmetry) above this suggests turning to a neighbour.
     head_turn_delta: float = 0.12
     proximity_box_widths: float = 0.8
+    # Require a neighbour within reach. True for classrooms (talking needs someone to talk to);
+    # set False only for single-person testing, where it degrades to "repeated head turning".
+    require_neighbour: bool = True
     min_duration_s: float = 5.0
     window_s: float = 8.0
     min_active_fraction: float = 0.5

@@ -7,6 +7,7 @@ sustained gate is open; the alert engine decides whether that becomes a new aler
 from __future__ import annotations
 
 import math
+from collections import deque
 from typing import Protocol
 
 from ..config import (
@@ -216,7 +217,7 @@ class TalkingClassifier:
     def __init__(self, t: TalkingThresholds, fps: float) -> None:
         self.t = t
         self.gate = SustainedCondition(t.window_s, t.min_duration_s, t.min_active_fraction)
-        self._last_yaw: float | None = None
+        self._yaws: deque[float] = deque(maxlen=max(2, int(2.0 * fps)))
 
     def evaluate(self, me: TrackState, others: list[TrackState], ts: float) -> BehaviorEvent | None:
         if not self.t.enabled or me.latest is None:
@@ -224,19 +225,30 @@ class TalkingClassifier:
         cur = me.latest
         partner, gap = _nearest(cur, others)
         near = partner is not None and gap <= self.t.proximity_box_widths
+        if self.t.require_neighbour and not near:
+            self.gate.update(ts, False)
+            return None
+
         turned = False
         if cur.head_yaw is not None:
-            if self._last_yaw is not None:
-                turned = abs(cur.head_yaw - self._last_yaw) >= self.t.head_turn_delta
-            self._last_yaw = cur.head_yaw
-        res = self.gate.update(ts, near and turned)
+            if self._yaws:
+                # Compare against the recent baseline as well as the previous frame, so a slow
+                # turn away from "facing forward" counts, not only a fast one.
+                baseline = sum(self._yaws) / len(self._yaws)
+                turned = (abs(cur.head_yaw - self._yaws[-1]) >= self.t.head_turn_delta
+                          or abs(cur.head_yaw - baseline) >= self.t.head_turn_delta)
+            self._yaws.append(cur.head_yaw)
+
+        res = self.gate.update(ts, turned)
         if not res.triggered:
             return None
         conf = min(self.t.max_confidence, 0.2 + 0.2 * res.active_fraction)   # hard cap
         return BehaviorEvent(
             room_id="", behavior=self.behavior, track_ids=[me.track_id], ts=ts, score=conf,
             sustained_s=res.sustained_s,
-            evidence={"note": "video-only; low confidence by design", "neighbour": partner.track_id if partner else None},
+            evidence={"note": "video-only cue (head turning); low confidence by design, add audio to confirm",
+                      "neighbour": partner.track_id if near else None,
+                      "active_fraction": round(res.active_fraction, 2)},
         )
 
 

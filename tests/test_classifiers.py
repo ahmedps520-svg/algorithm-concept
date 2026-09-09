@@ -127,13 +127,27 @@ def test_person_never_seated_is_not_out_of_seat():
     assert first(run(actors, lambda t, a: None, 40), Behavior.OUT_OF_SEAT) is None
 
 
-def test_talking_is_off_by_default_and_capped_low_when_enabled():
-    def script(t, a):
-        a[0].x = 0.30 + (0.002 if int(t * 10) % 2 else -0.002)   # head turning proxy via yaw jitter
-    assert first(run(seated_actors(), script, 30), Behavior.TALKING) is None
-    th = BehaviorThresholds(talking=TalkingThresholds(enabled=True, head_turn_delta=0.0, min_duration_s=2))
-    events = run(seated_actors(), script, 30, th)
+def test_talking_requires_a_neighbour_and_is_capped_low():
+    """Talking is on but deliberately weak: it needs someone to talk to, and can never exceed
+    LOW confidence from video alone."""
+    def turning(t, a):
+        a[0].head_yaw_drive = t          # unused by the source; yaw comes from geometry below
+        a[0].x = 0.15 + (0.01 if int(t * 10) % 4 < 2 else -0.01)
+
+    th = BehaviorThresholds(talking=TalkingThresholds(head_turn_delta=0.0, min_duration_s=2))
+    events = run(seated_actors(), turning, 30, th)
     talking = [ev for _, ev in events if ev.behavior is Behavior.TALKING]
-    assert talking
+    assert talking, "a head-turning student next to neighbours should produce talking events"
     assert all(ev.score <= th.talking.max_confidence for ev in talking)
     assert all(ev.confidence.value == "low" for ev in talking)
+    assert all(ev.evidence["neighbour"] is not None for ev in talking)
+
+    # Alone in frame: no neighbour, so no talking event however much they turn.
+    alone = [Actor(id=1, x=0.15, y=0.48, jitter=0.002)]
+    th2 = BehaviorThresholds(talking=TalkingThresholds(head_turn_delta=0.0, min_duration_s=2))
+    assert first(run(alone, turning, 30, th2, zones=[]), Behavior.TALKING) is None
+
+
+def test_talking_can_be_disabled_per_room():
+    th = BehaviorThresholds(talking=TalkingThresholds(enabled=False, head_turn_delta=0.0, min_duration_s=2))
+    assert first(run(seated_actors(), lambda t, a: None, 30, th), Behavior.TALKING) is None

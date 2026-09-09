@@ -81,14 +81,14 @@
     <section>
       <h2>Live rooms <span class="badge b-low" id="roomcount">0 cameras</span><span class="spacer"></span><span class="live-status" id="modelstatus"></span></h2>
       <div id="grid" class="grid"></div>
-      <div class="note" id="hint">Click <b>＋ Add camera</b> and allow camera access. Sit in view, then draw a seat zone around yourself with <b>Draw zone</b>. Then try: head down and still for 12 s (sleeping), walk out of the zone for 8 s (out of seat), or two people shoving with arms up for 3 s (fighting). Brief movement never alerts.</div>
+      <div class="note" id="hint">Click <b>＋ Add camera</b> and allow camera access. Sit in view, then draw a seat zone around yourself with <b>Draw zone</b>. Then try: head down and still for 12 s (sleeping), walk out of the zone for 8 s (out of seat), two people shoving with arms up for 3 s (fighting), or turn your head side to side for 5 s (talking, always low confidence). Brief movement never alerts.</div>
     </section>
     <section>
       <h2>Incident log</h2>
       <div class="filters">
         <select id="f-status"><option value="">any status</option><option>new</option><option>acknowledged</option><option>confirmed</option><option>dismissed</option></select>
         <select id="f-room"><option value="">any room</option></select>
-        <select id="f-behavior"><option value="">any behavior</option><option value="fighting">fighting</option><option value="sleeping">sleeping</option><option value="out_of_seat">out of seat</option></select>
+        <select id="f-behavior"><option value="">any behavior</option><option value="fighting">fighting</option><option value="sleeping">sleeping</option><option value="out_of_seat">out of seat</option><option value="talking">talking</option></select>
       </div>
       <div style="overflow:auto"><table><thead><tr><th>Time</th><th>Room</th><th>Behavior</th><th>Conf</th><th>Status</th><th>Reviewed by</th><th>Clip</th><th>Clip expires</th></tr></thead>
       <tbody id="log"></tbody></table></div>
@@ -106,7 +106,7 @@
         </ol>
         <ul>
           <li>Video never leaves the device. There is no server; clips live in page memory and vanish on reload.</li>
-          <li>Talking is not detected: from video alone at classroom distance it is low confidence and needs an audio channel.</li>
+          <li><b>Talking</b> is on but deliberately weak. Nothing at this distance resolves lip motion, so the only cue is repeated head turning; events are hard-capped at LOW confidence, can never reach HIGH, and are a nudge to look, not evidence. In a classroom the rule also requires a neighbour within reach; that requirement is relaxed here so one person testing alone can see it. Add a per-room audio level channel before trusting it.</li>
           <li>Seat zones are saved per camera in this browser.</li>
         </ul>
       </details>
@@ -143,6 +143,10 @@ const TH = {
   fighting: { window: 4, minDur: 3, minFrac: 0.6, motionSpike: 0.6, proximity: 0.6, relative: 0.5, partnerMotion: 0.3, armFrames: 6, frameScore: 0.6, floor: 0.5 },
   sleeping: { window: 25, minDur: 12, minFrac: 0.85, headDrop: 0.15, maxMotion: 0.3 },
   out_of_seat: { window: 10, minDur: 8, minFrac: 0.8, margin: 0.03 },
+  // Talking from video alone is a weak cue: at classroom distance no lip motion is resolvable,
+  // so this is repeated head turning only, hard-capped at LOW confidence. requireNeighbour is
+  // true in the shipped classroom config; it is false here so one person testing alone sees it.
+  talking: { window: 8, minDur: 5, minFrac: 0.5, headTurn: 0.12, proximity: 0.8, requireNeighbour: false, maxConf: 0.35 },
 };
 const DEBOUNCE = { perTrack: 120, perRoom: 30 };
 const CLIP = { pre: 10, post: 10, fps: 10, w: 320, h: 180 };
@@ -187,12 +191,13 @@ class TrackState {
     this.id = id; this.room = room; this.obs = []; this.age = 0; this.homeZone = null; this.lastSeen = 0;
     this.gates = { fighting: new Sustain(TH.fighting.window, TH.fighting.minDur, TH.fighting.minFrac),
                    sleeping: new Sustain(TH.sleeping.window, TH.sleeping.minDur, TH.sleeping.minFrac),
-                   out_of_seat: new Sustain(TH.out_of_seat.window, TH.out_of_seat.minDur, TH.out_of_seat.minFrac) };
-    this.armFrames = 0; this.scores = []; this.partner = null;
+                   out_of_seat: new Sustain(TH.out_of_seat.window, TH.out_of_seat.minDur, TH.out_of_seat.minFrac),
+                   talking: new Sustain(TH.talking.window, TH.talking.minDur, TH.talking.minFrac) };
+    this.armFrames = 0; this.scores = []; this.partner = null; this.yaws = [];
   }
   observe(d, ts) {
     const prev = this.obs[this.obs.length - 1];
-    const o = { ts, cx: d.cx, cy: d.cy, w: d.w, h: d.h, fx: d.cx, fy: d.cy + d.h / 2, vx: 0, vy: 0, motion: 0, headDrop: d.headDrop, armsUp: d.armsUp };
+    const o = { ts, cx: d.cx, cy: d.cy, w: d.w, h: d.h, fx: d.cx, fy: d.cy + d.h / 2, vx: 0, vy: 0, motion: 0, headDrop: d.headDrop, armsUp: d.armsUp, headYaw: d.headYaw };
     if (prev) { const dt = ts - prev.ts; if (dt > 1e-3) { o.vx = (o.cx - prev.cx) / dt; o.vy = (o.cy - prev.cy) / dt; o.motion = Math.hypot(o.cx - prev.cx, o.cy - prev.cy) / Math.max(o.w, 1e-3) / dt; } }
     this.obs.push(o); while (this.obs.length && ts - this.obs[0].ts > 25) this.obs.shift();
     this.age++; this.lastSeen = ts;
@@ -241,6 +246,21 @@ class TrackState {
       if (r.trig) events.push({ behavior: 'out_of_seat', tracks: [this.id], score: Math.min(1, 0.5 + 0.5 * r.frac), sustained: r.sustained,
                                 evidence: { home_zone: this.homeZone, active_fraction: r.frac.toFixed(2) } });
     }
+    // --- talking (LOW confidence by design: head-turn cue only, needs audio to be reliable)
+    const nearTalk = cands.some(o => { const p = o.latest;
+      const dx = Math.max(0, Math.abs(cur.cx - p.cx) - (cur.w + p.w) / 2), dy = Math.max(0, Math.abs(cur.cy - p.cy) - (cur.h + p.h) / 2);
+      return Math.hypot(dx, dy) / Math.max(Math.min(cur.w, p.w), 1e-3) <= TH.talking.proximity; });
+    if (!TH.talking.requireNeighbour || nearTalk) {
+      let turned = false;
+      if (cur.headYaw != null) {
+        if (this.yaws.length) { const base = this.yaws.reduce((a, b) => a + b, 0) / this.yaws.length;
+          turned = Math.abs(cur.headYaw - this.yaws[this.yaws.length - 1]) >= TH.talking.headTurn || Math.abs(cur.headYaw - base) >= TH.talking.headTurn; }
+        this.yaws.push(cur.headYaw); if (this.yaws.length > 20) this.yaws.shift();
+      }
+      r = this.gates.talking.update(ts, turned);
+      if (r.trig) events.push({ behavior: 'talking', tracks: [this.id], score: Math.min(TH.talking.maxConf, 0.2 + 0.2 * r.frac), sustained: r.sustained,
+                                evidence: { note: 'video-only head-turn cue; add audio to confirm', neighbour: nearTalk ? 'yes' : 'none', active_fraction: r.frac.toFixed(2) } });
+    } else { this.gates.talking.update(ts, false); }
     return events;
   }
 }
@@ -441,14 +461,20 @@ async function addCamera(deviceId) {
         const good = kp.filter(k => k[2] >= 0.3); if (good.length < 4) continue;
         let x1 = Math.min(...good.map(k => k[0])), x2 = Math.max(...good.map(k => k[0])), y1 = Math.min(...good.map(k => k[1])), y2 = Math.max(...good.map(k => k[1]));
         const pw = (x2 - x1) * 0.15, ph = (y2 - y1) * 0.12; x1 -= pw; x2 += pw; y1 -= ph; y2 += ph * 0.5;   // keypoints sit inside the body; pad to a box
-        const nose = kp[0], ls = kp[5], rs = kp[6], lh = kp[11], rh = kp[12], lw = kp[9], rw = kp[10];
-        let headDrop = null, armsUp = false;
+        const nose = kp[0], ls = kp[5], rs = kp[6], lh = kp[11], rh = kp[12], lw = kp[9], rw = kp[10], le = kp[3], re = kp[4];
+        let headDrop = null, armsUp = false, headYaw = null;
+        // Yaw proxy: how far the nose sits from the midpoint between the ears. Facing the
+        // camera gives ~0; turning to either side pushes it toward ±1.
+        if (nose[2] >= 0.3 && le[2] >= 0.3 && re[2] >= 0.3) {
+          const span = Math.max(Math.abs(re[0] - le[0]), 1e-3);
+          headYaw = ((nose[0] - le[0]) - (re[0] - nose[0])) / span;
+        }
         if (nose[2] >= 0.3 && ls[2] >= 0.3 && rs[2] >= 0.3) {
           const shY = (ls[1] + rs[1]) / 2, torso = (lh[2] >= 0.3 && rh[2] >= 0.3) ? Math.max(Math.abs((lh[1] + rh[1]) / 2 - shY), 0.02) : Math.max((y2 - y1) * 0.35, 0.02);
           headDrop = (nose[1] - shY) / torso;
           armsUp = (lw[2] >= 0.3 && lw[1] < ls[1]) || (rw[2] >= 0.3 && rw[1] < rs[1]);
         }
-        dets.push({ id: p.id, cx: (x1 + x2) / 2, cy: (y1 + y2) / 2, w: Math.max(x2 - x1, 0.02), h: Math.max(y2 - y1, 0.02), headDrop, armsUp });
+        dets.push({ id: p.id, cx: (x1 + x2) / 2, cy: (y1 + y2) / 2, w: Math.max(x2 - x1, 0.02), h: Math.max(y2 - y1, 0.02), headDrop, armsUp, headYaw });
         kps.set(p.id, kp);
       }
       drawOverlays(room, dets, kps);
@@ -498,6 +524,8 @@ function addSimRoom() {
     once('hp2', t, 51.5, () => { a[0].jitter = a[1].jitter = 0.002; a[0].armsUp = a[1].armsUp = false; a[0].moveTo(...seats[0]); a[1].moveTo(...seats[1]); });
     once('f1', t, 68, () => { a[0].moveTo(0.32, 0.5); a[1].moveTo(0.39, 0.5); a[0].jitter = a[1].jitter = 0.025; a[0].armsUp = a[1].armsUp = true; });
     once('f2', t, 76, () => { a[0].moveTo(...seats[0]); a[1].moveTo(...seats[1]); a[0].jitter = a[1].jitter = 0.002; a[0].armsUp = a[1].armsUp = false; });
+    // student 2 turns to a neighbour and chats from 55 s (a LOW-confidence talking alert)
+    a[1].yaw = (t >= 55 && t < 66) ? 0.45 * Math.sin(t * 2.2) : 0;
     once('reset', t, 100, () => { fired.clear(); a[3].headDrop = 0; a[3].jitter = 0.002; });
   };
   let last = now(), simT = 0;
@@ -513,7 +541,7 @@ function addSimRoom() {
       const kp = []; kp[0] = [cx, noseY, 1]; kp[5] = [cx - 0.35 * w, shY, 1]; kp[6] = [cx + 0.35 * w, shY, 1]; kp[7] = [cx - 0.45 * w, shY + 0.15 * h, 1]; kp[8] = [cx + 0.45 * w, shY + 0.15 * h, 1];
       kp[9] = [cx - 0.5 * w, wy, 1]; kp[10] = [cx + 0.5 * w, wy, 1]; kp[11] = [cx - 0.2 * w, hipY, 1]; kp[12] = [cx + 0.2 * w, hipY, 1]; kp[13] = [cx - 0.22 * w, hipY + 0.2 * h, 1]; kp[14] = [cx + 0.22 * w, hipY + 0.2 * h, 1]; kp[15] = [cx - 0.25 * w, top + h, 1]; kp[16] = [cx + 0.25 * w, top + h, 1];
       c.fillStyle = '#e8c9a0'; c.beginPath(); c.arc(cx * W, noseY * H, 0.09 * h * H, 0, Math.PI * 2); c.fill();
-      dets.push({ id: a.id, cx, cy, w, h, headDrop: (noseY - shY) / (hipY - shY), armsUp: a.armsUp }); kps.set(a.id, kp);
+      dets.push({ id: a.id, cx, cy, w, h, headDrop: (noseY - shY) / (hipY - shY), armsUp: a.armsUp, headYaw: a.yaw ?? 0 }); kps.set(a.id, kp);
     }
     drawOverlays(room, dets, kps); processFrame(room, dets, t);
   }, 100);
@@ -535,6 +563,7 @@ function renderQueue() {
       <div class="row"><b>${nice(a.behavior)}</b> ${badge(a.confidence, a.confidence)} ${badge(a.status, a.status)} <span style="color:var(--muted)">${roomName(a.room_id)}</span></div>
       <div class="meta">${wall(a.first_ts)} · sustained ${a.sustained.toFixed(1)}s · seen ${a.occurrences}× · tracks ${a.track_ids.join(', ')}</div>
       <div class="meta">${Object.entries(a.evidence).map(([k, v]) => `${k}=${v}`).join(' · ')}</div>
+      ${a.behavior === 'talking' ? '<div class="meta" style="color:var(--ack)">Video-only cue, capped at low confidence. Not evidence on its own.</div>' : ''}
       ${a.status === 'acknowledged' ? `<div class="meta">acknowledged by <b>${a.acknowledged_by}</b></div><textarea rows="2" placeholder="Review notes (optional)">${notes[a.id] || ''}</textarea>` : ''}
       <div class="actions">
         ${a.clip ? `<button onclick="openClip('${a.id}')">View clip</button>` : '<button disabled>clip saving…</button>'}

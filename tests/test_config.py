@@ -13,7 +13,8 @@ def test_shipped_configs_load():
     s = load_system_config(ROOT / "config/system.yaml")
     rooms = load_room_configs(ROOT / "config/rooms")
     assert {r.id for r in rooms} == {"room_101", "room_102"}
-    assert s.default_thresholds.talking.enabled is False
+    assert s.default_thresholds.talking.enabled is True
+    assert s.default_thresholds.talking.max_confidence <= 0.5   # never more than LOW
 
 
 def test_room_overrides_merge_with_defaults():

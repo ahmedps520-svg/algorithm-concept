@@ -2,7 +2,10 @@ name: Deploy demo to GitHub Pages
 
 on:
   push:
-    branches: [main, claude/trusting-lamport-a07jjo]
+    # The github-pages environment only allows deployments from the repository's
+    # default branch, which is this one. Pushing docs/ to another branch will be
+    # rejected by the environment before any step runs.
+    branches: [claude/trusting-lamport-a07jjo]
     paths: ["docs/**", ".github/workflows/pages.yml"]
   workflow_dispatch:
 

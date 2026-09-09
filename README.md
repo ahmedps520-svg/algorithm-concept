@@ -10,6 +10,10 @@ TensorFlow.js); the classifiers, alert debounce, review workflow and clip logic 
 the Python backend. Video never leaves the device. A "Simulated room" button adds a scripted
 room so every alert type can be seen without acting it out.
 
+The demo deploys from `claude/trusting-lamport-a07jjo`, the repository's default branch. The
+`github-pages` environment only accepts deployments from the default branch, so a push of
+`docs/` to any other branch is rejected before the workflow runs a step.
+
 One fixed camera per room. A per-room pipeline detects and tracks people, estimates pose, runs
 rule-based behavior classifiers over sliding windows, and raises alerts to a staff dashboard.
 The system never takes action on its own: every alert must be acknowledged and reviewed by a
@@ -97,16 +101,23 @@ A single frame can never open it.
 | **fighting** | weighted sum of: motion spike (0.3), another person within reach (0.2), *relative* velocity between the two (0.3), sustained arm raise (0.2); frame active at ≥ 0.6 | 3 s, 60 % of a 4 s window | Motion+proximity alone (0.5) never crosses the threshold, so two students walking together score nothing; relative velocity is a *difference*, so shared motion cancels. Event carries both track ids. |
 | **sleeping** | nose below shoulder line by ≥ 15 % of torso height, and mean motion over the last second below 0.3 box-widths/s | 20 s, 85 % of 25 s | Frames without a pose neither count for nor against. |
 | **out_of_seat** | foot point outside every seat zone (+ margin) | 8 s, 80 % of 10 s | Only fires for people first seen *inside* a zone (`require_home_zone`), so the teacher and visitors never trigger. |
-| **talking** | head turn toward a neighbour | 5 s, 50 % of 8 s | **Off by default.** Video-only talking detection at classroom distance is unreliable; when enabled it is hard-capped at LOW confidence (`max_confidence: 0.35`). |
+| **talking** | repeated head turning (yaw change vs. the previous frame and a 2 s baseline) with a neighbour within reach | 5 s, 50 % of 8 s | **On, but deliberately weak.** Hard-capped at LOW confidence (`max_confidence: 0.35`), so it can never reach HIGH and never carries a clip on its own. `require_neighbour: false` degrades it to plain head turning; only useful for single-person testing. |
 
 ### On talking detection
 
-At 540p from a ceiling-corner camera, a student's mouth is a handful of pixels; lip motion is
-not resolvable and head turns are ambiguous. If talking-out-of-turn matters, add a per-room
-audio channel: most IP cameras expose an audio track on the same RTSP stream. A sensible next
-step is a room-level sound-pressure/VAD signal (no speech recognition, no transcription) fused
-with the head-turn cue, i.e. "someone is talking AND this track turned to a neighbour". That
-keeps the privacy footprint to "was there voice activity", never "what was said".
+Talking detection is enabled, and you should read its alerts as "a staff member might want to
+glance at this", never as a finding. At 540p from a ceiling-corner camera a student's mouth is
+a handful of pixels: lip motion is not resolvable, and head turns are ambiguous between talking
+to a neighbour, looking at the board, and dropping a pencil. The classifier therefore uses the
+one cue that survives at that resolution, repeated head turning toward a nearby person, and the
+result is clamped so it can never outrank a fighting or sleeping alert in the queue.
+
+To make it actually meaningful, add a per-room audio channel; most IP cameras carry an audio
+track on the same RTSP stream. The right next step is a room-level sound-pressure or
+voice-activity signal (no speech recognition, no transcription) fused with the head-turn cue,
+i.e. "there is voice activity in the room AND this track is turned toward a neighbour". That
+keeps the privacy footprint at "was there voice activity", never "what was said". Until then,
+`enabled: false` per room is a legitimate choice for rooms where the noise is not worth it.
 
 ## Alert lifecycle and the mandatory human step
 

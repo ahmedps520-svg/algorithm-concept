@@ -44,4 +44,6 @@ default_thresholds:
   out_of_seat:
     min_duration_s: 8.0
   talking:
-    enabled: false             # low confidence from video alone; see README on audio
+    enabled: true              # LOW confidence from video alone (head-turn cue only, capped at
+                               # 0.35). Never treat a talking alert as evidence on its own; see
+                               # the README section on adding an audio channel.
