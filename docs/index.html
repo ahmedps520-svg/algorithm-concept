@@ -2,169 +2,375 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Classroom Monitor – Staff Dashboard</title>
+<title>Classroom Monitor</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
-  :root { --bg:#0f1115; --panel:#181b22; --line:#2a2f3a; --fg:#e6e8ee; --muted:#8b93a7;
-          --new:#e5484d; --ack:#f5a524; --ok:#30a46c; --low:#6b7280; --accent:#2f5fd8; }
-  * { box-sizing:border-box; }
-  body { margin:0; font:14px/1.45 system-ui, -apple-system, Segoe UI, sans-serif; background:var(--bg); color:var(--fg); }
-  header { display:flex; align-items:center; gap:12px; padding:10px 16px; border-bottom:1px solid var(--line); background:var(--panel); flex-wrap:wrap; }
-  header h1 { font-size:16px; margin:0; }
-  header .spacer { flex:1; }
-  input, select { background:#0f1115; color:var(--fg); border:1px solid var(--line); padding:6px 8px; border-radius:6px; font:inherit; }
-  main { display:grid; grid-template-columns: minmax(0,1fr) 400px; gap:12px; padding:12px; min-height:calc(100vh - 54px); }
-  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
-  section { background:var(--panel); border:1px solid var(--line); border-radius:8px; overflow:auto; }
-  section h2 { font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); margin:0; padding:10px 12px; border-bottom:1px solid var(--line); position:sticky; top:0; background:var(--panel); z-index:1; display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
-  section h2 .spacer { flex:1; }
-  .left { display:flex; flex-direction:column; gap:12px; min-width:0; }
-  .grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap:10px; padding:10px; }
-  .room { position:relative; background:#000; border-radius:6px; overflow:hidden; border:2px solid transparent; }
-  .room.alerting { border-color:var(--new); box-shadow:0 0 0 2px rgba(229,72,77,.25); }
-  .room canvas { width:100%; display:block; aspect-ratio:16/9; touch-action:none; }
-  .room canvas.drawing { cursor:crosshair; }
-  .room .label { position:absolute; left:0; right:0; bottom:0; padding:4px 8px; background:rgba(0,0,0,.6); font-size:12px; display:flex; justify-content:space-between; gap:8px; }
-  .room .rec { position:absolute; top:6px; left:8px; font-size:11px; color:#fff; background:rgba(229,72,77,.85); padding:1px 6px; border-radius:4px; display:none; }
-  .room.recording .rec { display:block; }
-  .room .tools { position:absolute; top:6px; right:6px; display:flex; gap:4px; }
-  .room .overlay { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; background:rgba(15,17,21,.85); text-align:center; padding:20px; }
-  .room .overlay p { margin:0; color:var(--muted); font-size:13px; max-width:360px; }
-  .badge { display:inline-block; padding:1px 7px; border-radius:10px; font-size:11px; font-weight:600; white-space:nowrap; }
-  .b-new { background:var(--new); } .b-acknowledged { background:var(--ack); color:#000; }
-  .b-confirmed { background:var(--ok); } .b-dismissed { background:var(--low); }
-  .b-high { background:#7f1d1d; } .b-medium { background:#78350f; } .b-low { background:#374151; }
-  .b-local { background:#1f4d3a; }
-  .alert { padding:10px 12px; border-bottom:1px solid var(--line); animation: pop .25s ease-out; }
-  @keyframes pop { from { background:#3a1e20; } to { background:transparent; } }
-  .alert .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
-  .alert .meta { color:var(--muted); font-size:12px; margin-top:2px; }
-  .alert .actions { margin-top:8px; display:flex; gap:6px; flex-wrap:wrap; }
-  button { background:#242938; color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:5px 10px; cursor:pointer; font-size:13px; }
-  button:hover { background:#2e3446; } button.primary { background:var(--accent); border-color:var(--accent); }
-  button.danger { background:#6b2124; border-color:#6b2124; } button.ok { background:#1f5f3d; border-color:#1f5f3d; }
-  button:disabled { opacity:.5; cursor:not-allowed; }
-  button.small { padding:2px 8px; font-size:11px; } button.on { background:var(--accent); border-color:var(--accent); }
-  textarea { width:100%; background:#0f1115; color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:6px; font:inherit; margin-top:6px; }
-  table { width:100%; border-collapse:collapse; font-size:13px; }
-  th, td { text-align:left; padding:6px 10px; border-bottom:1px solid var(--line); white-space:nowrap; }
-  tr.clickable:hover { background:#1f2430; cursor:pointer; }
-  .filters { display:flex; gap:8px; padding:8px 12px; flex-wrap:wrap; }
-  dialog { background:var(--panel); color:var(--fg); border:1px solid var(--line); border-radius:10px; width:min(820px, 95vw); padding:16px; }
-  dialog::backdrop { background:rgba(0,0,0,.6); }
-  dialog img { width:100%; background:#000; border-radius:6px; aspect-ratio:16/9; }
-  .clipbar { display:flex; gap:8px; align-items:center; margin-top:8px; }
-  .clipbar input[type=range] { flex:1; }
-  .empty { padding:24px; text-align:center; color:var(--muted); }
-  .note { font-size:12px; color:var(--muted); padding:8px 12px; border-bottom:1px solid var(--line); }
-  .note b { color:var(--ack); }
-  .kv { display:grid; grid-template-columns:auto 1fr; gap:2px 12px; font-size:12px; margin-top:8px; color:var(--muted); }
-  .kv b { color:var(--fg); font-weight:500; }
-  details { padding:8px 12px; font-size:13px; color:var(--muted); }
-  details summary { cursor:pointer; color:var(--fg); }
-  details ol, details ul { padding-left:18px; margin:6px 0; }
-  .live-status { font-size:11px; color:var(--muted); }
+  :root{
+    --bg:#0b0d12; --surface:#12151c; --surface2:#171b24; --raise:#1d2230;
+    --line:#232936; --line-soft:#1b202b;
+    --fg:#e9ebf1; --dim:#9aa3b5; --mute:#6b7488;
+    --accent:#4c7dff; --accent-soft:#4c7dff22;
+    --ok:#2ea36a; --warn:#e0a02c; --danger:#e05252; --info:#7c6bdd;
+    --r:10px; --r-sm:7px;
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px -12px rgba(0,0,0,.6);
+  }
+  *{box-sizing:border-box}
+  [hidden]{display:none!important}   /* our components set display, which would otherwise win */
+  html,body{height:100%}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font:13.5px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Inter,Roboto,sans-serif;
+    -webkit-font-smoothing:antialiased}
+  h1,h2,h3{margin:0;font-weight:600;letter-spacing:-.01em}
+  .grow{flex:1}
+  .muted{color:var(--mute);font-size:11.5px}
+  .dim{color:var(--dim)}
+
+  /* ---------------------------------------------------------------- top bar */
+  .topbar{display:flex;align-items:center;gap:14px;padding:0 18px;height:52px;
+    background:linear-gradient(180deg,#161a23,#12151c);border-bottom:1px solid var(--line);
+    position:sticky;top:0;z-index:20;flex-wrap:wrap}
+  .brand{display:flex;align-items:center;gap:9px;font-size:14.5px;font-weight:600}
+  .mark{width:19px;height:19px;border-radius:6px;background:linear-gradient(140deg,var(--accent),#8b5cf6);
+    position:relative;box-shadow:0 0 0 1px #ffffff14, 0 2px 8px -2px var(--accent)}
+  .mark::after{content:"";position:absolute;inset:6px;border-radius:2px;background:#0b0d12aa}
+
+  /* ---------------------------------------------------------------- primitives */
+  .pill{display:inline-flex;align-items:center;gap:5px;height:20px;padding:0 8px;border-radius:999px;
+    font-size:10.5px;font-weight:600;letter-spacing:.02em;white-space:nowrap;
+    background:var(--raise);color:var(--dim);border:1px solid var(--line)}
+  .pill.ok{background:#2ea36a1f;color:#5fd39b;border-color:#2ea36a4d}
+  .pill.warn{background:#e0a02c1f;color:#f0c268;border-color:#e0a02c4d}
+  .pill.danger{background:#e052521f;color:#ff8f8f;border-color:#e052524d}
+  .pill.accent{background:var(--accent-soft);color:#9db6ff;border-color:#4c7dff4d}
+  .pill.info{background:#7c6bdd1f;color:#b4a8ff;border-color:#7c6bdd4d}
+  .pill.dot::before{content:"";width:5px;height:5px;border-radius:50%;background:currentColor}
+  .pill.live::before{animation:pulse 1.8s ease-in-out infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
+
+  .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:30px;padding:0 11px;
+    border-radius:var(--r-sm);border:1px solid var(--line);background:var(--surface2);color:var(--fg);
+    font:inherit;font-size:12.5px;font-weight:500;cursor:pointer;white-space:nowrap;
+    transition:background .12s,border-color .12s,transform .06s}
+  .btn:hover{background:var(--raise);border-color:#2e3546}
+  .btn:active{transform:translateY(1px)}
+  .btn:disabled{opacity:.45;cursor:not-allowed;transform:none}
+  .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  .btn.primary:hover{background:#5c89ff;border-color:#5c89ff}
+  .btn.ok{background:#1e7a4d;border-color:#1e7a4d;color:#fff}
+  .btn.ok:hover{background:#249059;border-color:#249059}
+  .btn.danger{background:#8c2f2f;border-color:#8c2f2f;color:#fff}
+  .btn.danger:hover{background:#a13636;border-color:#a13636}
+  .btn.ghost{background:transparent;border-color:transparent;color:var(--dim)}
+  .btn.ghost:hover{background:var(--surface2);color:var(--fg)}
+  .btn.sm{height:24px;padding:0 8px;font-size:11.5px;border-radius:6px}
+  .btn.rec::before{content:"";width:8px;height:8px;border-radius:50%;background:#ff6b6b}
+
+  input[type=text],input:not([type]),select,textarea{height:30px;padding:0 9px;border-radius:var(--r-sm);
+    border:1px solid var(--line);background:#0d1017;color:var(--fg);font:inherit;font-size:12.5px;outline:none;
+    transition:border-color .12s,box-shadow .12s}
+  textarea{height:auto;padding:7px 9px;line-height:1.45;resize:vertical;width:100%}
+  input:focus,select:focus,textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+  select{appearance:none;padding-right:26px;
+    background-image:linear-gradient(45deg,transparent 50%,var(--mute) 50%),linear-gradient(135deg,var(--mute) 50%,transparent 50%);
+    background-position:calc(100% - 14px) 13px,calc(100% - 9px) 13px;background-size:5px 5px;background-repeat:no-repeat}
+  .field{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--dim)}
+  .field input{width:150px}
+
+  .switch{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;color:var(--dim);cursor:pointer;user-select:none}
+  .switch input{position:absolute;opacity:0;pointer-events:none}
+  .switch i{width:32px;height:18px;border-radius:999px;background:#2a3040;border:1px solid var(--line);
+    position:relative;transition:background .15s;flex:none}
+  .switch i::after{content:"";position:absolute;top:2px;left:2px;width:12px;height:12px;border-radius:50%;
+    background:var(--dim);transition:transform .15s,background .15s}
+  .switch input:checked + i{background:var(--accent);border-color:var(--accent)}
+  .switch input:checked + i::after{transform:translateX(14px);background:#fff}
+  .switch input:focus-visible + i{box-shadow:0 0 0 3px var(--accent-soft)}
+
+  /* ---------------------------------------------------------------- layout */
+  main{display:grid;grid-template-columns:minmax(0,1fr) 390px;gap:14px;padding:14px;align-items:start}
+  @media(max-width:1080px){main{grid-template-columns:1fr}}
+  .col{display:flex;flex-direction:column;gap:14px;min-width:0}
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--shadow);overflow:hidden}
+  .card-head{display:flex;align-items:center;gap:9px;padding:11px 14px;border-bottom:1px solid var(--line-soft);
+    background:linear-gradient(180deg,#151922,#12151c);flex-wrap:wrap}
+  .card-head h2{font-size:12px;text-transform:uppercase;letter-spacing:.07em;color:var(--dim)}
+  .toolbar{display:flex;align-items:center;gap:8px;padding:11px 14px;border-bottom:1px solid var(--line-soft);flex-wrap:wrap}
+  .card-body{padding:14px}
+  .note{margin:0;padding:10px 14px;font-size:12px;line-height:1.55;color:var(--dim);background:#0e1118;border-bottom:1px solid var(--line-soft)}
+  .note b{color:var(--warn);font-weight:600}
+  .note code{background:#0a0c11;border:1px solid var(--line);padding:1px 5px;border-radius:4px;font-size:11.5px}
+  .empty{padding:34px 20px;text-align:center;color:var(--mute);font-size:12.5px}
+  .empty strong{display:block;color:var(--dim);font-size:13px;font-weight:600;margin-bottom:4px}
+
+  /* ---------------------------------------------------------------- room grid */
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(330px,1fr));gap:12px;padding:14px}
+  .room{position:relative;background:#000;border-radius:var(--r-sm);overflow:hidden;
+    border:1px solid var(--line);transition:border-color .2s,box-shadow .2s}
+  .room.alerting{border-color:var(--danger);box-shadow:0 0 0 3px #e0525226}
+  .room canvas{width:100%;display:block;aspect-ratio:16/9;touch-action:none}
+  .room canvas.drawing{cursor:crosshair}
+  .room .label{position:absolute;left:0;right:0;bottom:0;display:flex;justify-content:space-between;gap:8px;
+    padding:6px 9px;font-size:11.5px;color:#e9ebf1;
+    background:linear-gradient(0deg,#000000d9,#00000000)}
+  .room .label .stats{color:#b9c0d0;font-variant-numeric:tabular-nums}
+  .room .rec{position:absolute;top:8px;left:9px;display:none;align-items:center;gap:5px;height:19px;padding:0 7px;
+    border-radius:999px;background:#e05252e6;color:#fff;font-size:10.5px;font-weight:600}
+  .room.recording .rec{display:inline-flex}
+  .room .rec::before{content:"";width:6px;height:6px;border-radius:50%;background:#fff;animation:pulse 1.4s infinite}
+  .room .tools{position:absolute;top:8px;right:8px;display:flex;gap:5px;opacity:0;transition:opacity .15s}
+  .room:hover .tools,.room:focus-within .tools{opacity:1}
+  .room .tools .btn{background:#0b0d12cc;backdrop-filter:blur(4px)}
+  .room .overlay{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    gap:12px;padding:22px;text-align:center;background:#0b0d12ee;backdrop-filter:blur(2px)}
+  .room .overlay p{margin:0;max-width:340px;font-size:12.5px;line-height:1.55;color:var(--dim)}
+
+  /* ---------------------------------------------------------------- alerts */
+  .alert{padding:12px 14px;border-bottom:1px solid var(--line-soft);border-left:3px solid transparent;
+    animation:slidein .22s ease-out}
+  .alert.s-new{border-left-color:var(--danger);background:linear-gradient(90deg,#e0525210,transparent 40%)}
+  .alert.s-acknowledged{border-left-color:var(--warn)}
+  @keyframes slidein{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+  .alert .row{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+  .alert .title{font-size:13.5px;font-weight:600;text-transform:capitalize}
+  .alert .meta{margin-top:3px;font-size:11.5px;line-height:1.5;color:var(--mute);font-variant-numeric:tabular-nums}
+  .alert .meta b{color:var(--dim);font-weight:600}
+  .alert .ai{margin-top:7px;padding:7px 9px;border-radius:6px;background:#0e1118;border:1px solid var(--line-soft);
+    font-size:11.5px;line-height:1.5;color:var(--dim)}
+  .alert .actions{display:flex;gap:6px;margin-top:9px;flex-wrap:wrap}
+  .alert textarea{margin-top:7px;font-size:12px}
+
+  /* ---------------------------------------------------------------- table */
+  .table-wrap{overflow-x:auto}
+  table{width:100%;border-collapse:collapse;font-size:12.5px}
+  th{position:sticky;top:0;background:#141822;text-align:left;padding:8px 12px;font-size:10.5px;font-weight:600;
+    text-transform:uppercase;letter-spacing:.06em;color:var(--mute);border-bottom:1px solid var(--line);white-space:nowrap}
+  td{padding:8px 12px;border-bottom:1px solid var(--line-soft);white-space:nowrap;color:var(--dim);font-variant-numeric:tabular-nums}
+  tbody tr:hover{background:#161a23}
+  tbody tr.clickable{cursor:pointer}
+  .filters{display:flex;gap:8px;padding:11px 14px;border-bottom:1px solid var(--line-soft);flex-wrap:wrap}
+
+  /* ---------------------------------------------------------------- stats + progress */
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:1px;background:var(--line-soft);
+    border-top:1px solid var(--line-soft);border-bottom:1px solid var(--line-soft)}
+  .stat{background:var(--surface);padding:11px 14px}
+  .stat .k{font-size:10px;text-transform:uppercase;letter-spacing:.07em;color:var(--mute);margin-bottom:3px}
+  .stat .v{font-size:17px;font-weight:600;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+  .stat .v small{font-size:11.5px;font-weight:500;color:var(--mute);margin-left:3px}
+  .bar{height:6px;border-radius:999px;background:#0d1017;border:1px solid var(--line);overflow:hidden}
+  .bar > i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--accent),#8b5cf6);transition:width .4s}
+  .bar.run > i{min-width:3%}
+  .bar.run > i{background-image:linear-gradient(90deg,var(--accent),#8b5cf6,var(--accent));background-size:200% 100%;
+    animation:slide 2s linear infinite}
+  @keyframes slide{to{background-position:-200% 0}}
+  .result{padding:11px 14px;font-size:12px;line-height:1.6;color:var(--dim);border-top:1px solid var(--line-soft)}
+  .result b{color:var(--fg)}
+  .spark{display:flex;align-items:flex-end;gap:2px;height:26px}
+  .spark i{flex:1;min-width:2px;max-width:7px;background:var(--accent);border-radius:1px;opacity:.75}
+
+  /* ---------------------------------------------------------------- dialog + misc */
+  dialog{background:var(--surface);color:var(--fg);border:1px solid var(--line);border-radius:12px;
+    box-shadow:0 24px 64px -16px #000;padding:0;width:min(860px,95vw)}
+  dialog::backdrop{background:#05070ccc;backdrop-filter:blur(3px)}
+  dialog .dlg-head{padding:13px 16px;border-bottom:1px solid var(--line-soft);font-size:13px}
+  dialog .dlg-body{padding:16px}
+  dialog img{width:100%;background:#000;border-radius:var(--r-sm);aspect-ratio:16/9;display:block}
+  .clipbar{display:flex;gap:9px;align-items:center;margin-top:11px}
+  .clipbar input[type=range]{flex:1;accent-color:var(--accent)}
+  .kv{display:grid;grid-template-columns:auto 1fr;gap:5px 14px;font-size:12px;margin-top:13px;color:var(--mute)}
+  .kv b{color:var(--dim);font-weight:500}
+  details{border-top:1px solid var(--line-soft)}
+  details summary{padding:11px 14px;cursor:pointer;font-size:12.5px;font-weight:500;list-style:none;color:var(--dim)}
+  details summary::-webkit-details-marker{display:none}
+  details summary::before{content:"▸";display:inline-block;margin-right:8px;transition:transform .15s;color:var(--mute)}
+  details[open] summary::before{transform:rotate(90deg)}
+  details .card-body{padding-top:0;font-size:12.5px;line-height:1.65;color:var(--mute)}
+  details ol,details ul{padding-left:18px;margin:8px 0}
+  details li{margin:4px 0}
+  details b{color:var(--dim)}
+  #toast{position:fixed;left:50%;bottom:22px;transform:translate(-50%,20px);z-index:60;opacity:0;
+    padding:10px 16px;border-radius:8px;background:var(--raise);border:1px solid var(--line);box-shadow:var(--shadow);
+    font-size:12.5px;pointer-events:none;transition:opacity .2s,transform .2s;max-width:90vw}
+  #toast.show{opacity:1;transform:translate(-50%,0)}
+  #toast.err{border-color:#e0525266;background:#2a1618}
+  ::-webkit-scrollbar{width:10px;height:10px}
+  ::-webkit-scrollbar-thumb{background:#252b38;border-radius:99px;border:2px solid var(--bg)}
+  ::-webkit-scrollbar-thumb:hover{background:#303849}
+  ::-webkit-scrollbar-track{background:transparent}
 </style>
 </head>
 <body>
-<header>
-  <h1>Classroom Monitor</h1>
-  <span class="badge b-local" title="Video never leaves this device. Detection runs in your browser; clips are kept in page memory only.">LOCAL · nothing uploaded</span>
-  <select id="devices" title="Camera to add"><option value="">default camera</option></select>
-  <button id="addcam" class="primary">＋ Add camera</button>
-  <button id="addsim" title="Adds a scripted synthetic room so you can see all alert types without acting them out">＋ Simulated room</button>
-  <select id="preset" title="How long a behavior must last before it alerts"><option value="demo">Demo timing (fast)</option><option value="classroom">Classroom timing</option></select>
-  <label title="Off by default: from video alone this is unreliable. When on it needs a neighbour in reach and visible lip movement."><input type="checkbox" id="talk-on"> detect talking</label>
-  <span class="spacer"></span>
-  <label>Staff ID <input id="staff" placeholder="e.g. j.smith" style="width:150px" title="Required to acknowledge or review alerts"></label>
+<header class="topbar">
+  <div class="brand"><span class="mark"></span>Classroom Monitor</div>
+  <span class="pill ok dot" title="Video never leaves this device. Detection runs in your browser; clips are kept in page memory only.">On-device · nothing uploaded</span>
+  <div class="grow"></div>
+  <label class="field">Staff ID <input id="staff" placeholder="e.g. j.smith" title="Required to acknowledge or review alerts"></label>
 </header>
+
 <main>
-  <div class="left">
-    <section>
-      <h2>Live rooms <span class="badge b-low" id="roomcount">0 cameras</span><span class="spacer"></span><span class="live-status" id="modelstatus"></span><span class="live-status" id="facestatus"></span></h2>
+  <div class="col">
+    <!-- ------------------------------------------------------------ live rooms -->
+    <section class="card">
+      <div class="card-head">
+        <h2>Live rooms</h2>
+        <span class="pill" id="roomcount">0 cameras</span>
+        <div class="grow"></div>
+        <span class="muted" id="modelstatus"></span>
+        <span class="muted" id="facestatus"></span>
+      </div>
+      <div class="toolbar">
+        <select id="devices" title="Camera to add"><option value="">Default camera</option></select>
+        <button id="addcam" class="btn primary">Add camera</button>
+        <button id="addsim" class="btn" title="A scripted synthetic room, to see every alert type without acting them out">Simulated room</button>
+        <div class="grow"></div>
+        <select id="preset" title="How long a behavior must last before it alerts">
+          <option value="demo">Demo timing (fast)</option><option value="classroom">Classroom timing</option>
+        </select>
+        <label class="switch" title="Off by default: from video alone this is unreliable. When on it needs a neighbour in reach and visible lip movement.">
+          <input type="checkbox" id="talk-on"><i></i>Detect talking</label>
+      </div>
       <div id="grid" class="grid"></div>
-      <div class="note" id="hint">Click <b>＋ Add camera</b> and allow camera access. Sit still for a few seconds: a seat zone is created around you automatically (or draw one with <b>Draw zone</b>). Progress bars under your box show each behavior building up. Then try: <b>sleeping</b> — rest your head down on the desk and stay still (just looking down does not count); <b>out of seat</b> — walk out of your zone; <b>fighting</b> — two people close together, both moving, arms up. Brief movement never alerts.</div>
+      <p class="note" id="hint">Press <b>Add camera</b> and allow camera access. Sit still for a few seconds and a seat zone is drawn around you automatically. Then try <b>sleeping</b> (rest your head down on the desk and stay still, just looking down does not count), <b>out of seat</b> (walk out of your zone), or <b>fighting</b> (two people close together, both moving, arms up). Brief movement never alerts.</p>
     </section>
-    <section>
-      <h2>Incident log</h2>
+
+    <!-- ------------------------------------------------------------ incident log -->
+    <section class="card">
+      <div class="card-head"><h2>Incident log</h2></div>
       <div class="filters">
-        <select id="f-status"><option value="">any status</option><option>new</option><option>acknowledged</option><option>confirmed</option><option>dismissed</option></select>
-        <select id="f-room"><option value="">any room</option></select>
-        <select id="f-behavior"><option value="">any behavior</option><option value="fighting">fighting</option><option value="sleeping">sleeping</option><option value="out_of_seat">out of seat</option><option value="talking">talking</option></select>
+        <select id="f-status"><option value="">Any status</option><option>new</option><option>acknowledged</option><option>confirmed</option><option>dismissed</option></select>
+        <select id="f-room"><option value="">Any room</option></select>
+        <select id="f-behavior"><option value="">Any behavior</option><option value="fighting">fighting</option><option value="sleeping">sleeping</option><option value="out_of_seat">out of seat</option><option value="talking">talking</option></select>
       </div>
-      <div style="overflow:auto"><table><thead><tr><th>Time</th><th>Room</th><th>Behavior</th><th>Conf</th><th>AI opinion</th><th>Status</th><th>Reviewed by</th><th>Clip</th><th>Clip expires</th><th></th></tr></thead>
-      <tbody id="log"></tbody></table></div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Time</th><th>Room</th><th>Behavior</th><th>Conf</th><th>AI opinion</th><th>Status</th><th>Reviewed by</th><th>Clip</th><th>Clip expires</th><th></th></tr></thead>
+        <tbody id="log"></tbody>
+      </table></div>
     </section>
-    <section id="teach">
-      <h2>Teach the classifier <span class="badge b-low" id="modelbadge">rules only</span><span class="spacer"></span><label style="font-weight:400;text-transform:none;letter-spacing:0"><input type="checkbox" id="uselearned" checked> use learned model</label></h2>
-      <div class="note">Record yourself doing each behavior (and "normal" sitting) a few times. Only pose numbers are stored, never video. Training runs automatically after each recording: several model shapes are cross-validated on <b>your</b> examples and the best one runs alongside the rules. <b>Train harder</b> searches more; <b>keep searching</b> never stops. More examples, more people, more angles = better model. Export the set to train the backend with <code>scripts/train_behavior.py</code>.</div>
-      <div class="filters" style="align-items:center">
-        <select id="rec-label"><option value="normal">normal (sitting, working)</option><option value="sleeping">sleeping</option><option value="out_of_seat">out of seat</option><option value="talking">talking</option><option value="fighting">fighting</option></select>
-        <button id="rec-btn" class="primary">● Record 6 s</button>
-        <span id="rec-status" class="live-status"></span>
-        <span class="spacer"></span>
-        <button id="train-btn">Train</button>
-        <button id="train-more" title="Search many more model shapes and settings, keeping the best">Train harder</button>
-        <label title="Keep searching for a better model in the background, forever"><input type="checkbox" id="keep-searching"> keep searching</label>
-        <button id="export-btn" class="small">Export</button>
-        <label class="small" style="cursor:pointer"><button class="small" onclick="this.nextElementSibling.click()">Import</button><input type="file" id="import-file" accept="application/json" style="display:none"></label>
-        <button id="reset-btn" class="small danger">Reset</button>
+
+    <!-- ------------------------------------------------------------ training -->
+    <section class="card" id="teach">
+      <div class="card-head">
+        <h2>Teach the classifier</h2>
+        <span class="pill" id="modelbadge">rules only</span>
+        <div class="grow"></div>
+        <label class="switch"><input type="checkbox" id="uselearned" checked><i></i>Use learned model</label>
       </div>
-      <div id="train-counts" class="note" style="border:0"></div>
-      <div id="train-result" class="note" style="border:0"></div>
+      <p class="note">Record yourself doing each behavior, and plain <b>normal</b> sitting, a few times each. Only pose numbers are stored, never video. Training runs automatically after every recording: several model shapes are cross-validated on <b>your</b> examples and the best one runs alongside the rules.</p>
+      <div class="toolbar">
+        <select id="rec-label">
+          <option value="normal">normal (sitting, working)</option><option value="sleeping">sleeping</option>
+          <option value="out_of_seat">out of seat</option><option value="talking">talking</option><option value="fighting">fighting</option>
+        </select>
+        <button id="rec-btn" class="btn primary rec">Record 6 s</button>
+        <span class="muted" id="rec-status"></span>
+        <div class="grow"></div>
+        <button id="export-btn" class="btn sm">Export</button>
+        <button id="import-btn" class="btn sm">Import</button>
+        <input type="file" id="import-file" accept="application/json" hidden>
+        <button id="reset-btn" class="btn sm ghost">Reset</button>
+      </div>
+      <div class="stats">
+        <div class="stat"><div class="k">Examples</div><div class="v" id="st-examples">0</div></div>
+        <div class="stat"><div class="k">Accuracy</div><div class="v" id="st-acc">—</div></div>
+        <div class="stat"><div class="k">Model</div><div class="v" id="st-shape">—</div></div>
+        <div class="stat"><div class="k">Configurations tried</div><div class="v" id="st-trials">0</div></div>
+      </div>
+      <div class="toolbar">
+        <button id="train-btn" class="btn">Train</button>
+        <button id="train-more" class="btn" title="Search many more model shapes and settings, keeping the best">Train harder</button>
+        <span style="width:1px;height:22px;background:var(--line)"></span>
+        <select id="overnight-hours" title="How long the deep search should run">
+          <option value="1">1 hour</option><option value="4">4 hours</option>
+          <option value="8" selected>8 hours</option><option value="12">12 hours (overnight)</option>
+          <option value="0">Until I stop it</option>
+        </select>
+        <button id="overnight-btn" class="btn ok" title="Random search with repeated cross-validation, in a background thread">Overnight training</button>
+        <button id="overnight-stop" class="btn danger" hidden>Stop</button>
+        <div class="grow"></div>
+        <label class="switch" title="Keep looking for a better model in the background"><input type="checkbox" id="keep-searching"><i></i>Keep searching</label>
+      </div>
+      <div class="card-body" id="overnight-panel" hidden style="padding-top:0">
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px">
+          <span class="pill accent dot live" id="ov-state">running</span>
+          <span class="muted" id="ov-detail"></span>
+          <div class="grow"></div>
+          <div class="spark" id="ov-spark" style="width:120px"></div>
+        </div>
+        <div class="bar run"><i id="ov-bar"></i></div>
+      </div>
+      <div class="result" id="train-counts"></div>
+      <div class="result" id="train-result" style="border-top:0;padding-top:0"></div>
     </section>
-    <section id="verifier">
-      <h2>AI second opinion <span class="badge b-low" id="vstatus">off</span><span class="spacer"></span><label style="font-weight:400;text-transform:none;letter-spacing:0"><input type="checkbox" id="v-on"> enabled</label></h2>
-      <div class="note">A local vision-language model (Ollama) looks at 6 frames from each saved clip and says whether the alert looks real, a false alarm, or unclear, with a reason. Advisory only: the reviewer still decides. Run <code>ollama pull qwen3-vl:8b</code>, then start Ollama with <code>OLLAMA_ORIGINS=https://ahmedps520-svg.github.io</code> so this page may call it.</div>
-      <div class="filters" style="align-items:center">
-        <label>Ollama URL <input id="v-url" value="http://localhost:11434" style="width:200px"></label>
-        <label>Model <input id="v-model" value="qwen3-vl:8b" style="width:130px"></label>
-        <button id="v-test" class="small">Test connection</button>
-        <span id="v-msg" class="live-status"></span>
+
+    <!-- ------------------------------------------------------------ verifier -->
+    <section class="card" id="verifier">
+      <div class="card-head">
+        <h2>AI second opinion</h2>
+        <span class="pill" id="vstatus">off</span>
+        <div class="grow"></div>
+        <label class="switch"><input type="checkbox" id="v-on"><i></i>Enabled</label>
+      </div>
+      <p class="note">A local vision model reviews six frames from each saved clip and says whether the alert looks real, a false alarm, or unclear, with a reason. Advisory only: the reviewer decides. Run <code>ollama pull qwen3-vl:8b</code>, then start Ollama with <code>OLLAMA_ORIGINS=https://ahmedps520-svg.github.io</code> so this page may call it.</p>
+      <div class="toolbar">
+        <label class="field">Ollama URL <input id="v-url" value="http://localhost:11434" style="width:190px"></label>
+        <label class="field">Model <input id="v-model" value="qwen3-vl:8b" style="width:130px"></label>
+        <button id="v-test" class="btn sm">Test connection</button>
+        <span class="muted" id="v-msg"></span>
       </div>
     </section>
-    <section>
+
+    <!-- ------------------------------------------------------------ explainer -->
+    <section class="card">
       <details>
         <summary>How this works</summary>
+        <div class="card-body">
         <ol>
-          <li>Each camera is a room. Frames go to <b>MoveNet MultiPose</b> (TensorFlow.js) running in your browser: up to 6 people, 17 keypoints each, with a built-in box tracker giving stable ids. In the Python backend this stage is YOLOv8-pose + ByteTrack on an RTSP feed; the classifiers downstream are the same.</li>
+          <li>Each camera is a room. Frames go to <b>MoveNet MultiPose</b> (TensorFlow.js) in your browser: up to 6 people, 17 keypoints each, with stable per-person ids. The Python backend uses YOLOv8-pose and ByteTrack on an RTSP feed; everything downstream is the same.</li>
+          <li>Per track, each frame yields cues: torso motion, head motion, a nearby moving partner, relative velocity, sustained arm raise, head down (nose well below the shoulder line, or the face gone from view with the head at shoulder level) with an awake-veto when both eyes are plainly visible at normal head height, foot point outside every seat zone, lip movement.</li>
+          <li>Each behavior sits behind a <b>sustained-condition gate</b> with a minimum duration and a minimum fraction of active frames. Demo timing: fighting 2 s, sleeping 10 s, out of seat 6 s. Classroom timing: 3 / 20 / 8 s. A single frame can never alert.</li>
           <li>Talking is off by default: from video alone it is not reliable enough to act on. Switched on, it needs a neighbour within reach and visible lip movement from MediaPipe Face Landmarker, which only resolves close to the camera. In a classroom this cue needs an audio channel.</li>
-          <li>Per track, each frame yields cues: torso motion, head motion, a nearby moving partner, relative velocity, sustained arm raise, head down (nose well below the shoulder line, or the face gone from view with the head at shoulder level) with an awake-veto when both eyes are plainly visible at normal head height, foot point outside every seat zone, lip movement, head turning.</li>
-          <li>Each behavior sits behind a <b>sustained-condition gate</b> with a minimum duration and a minimum fraction of active frames. Demo timing: fighting 2 s, sleeping 6 s, out of seat 4 s, talking 3 s. Classroom timing: 3 / 20 / 8 / 5 s. A single frame can never alert.</li>
-          <li>A seat zone is created automatically around anyone who stays put for a few seconds without one (labelled "auto seat"); you can also draw zones by hand.</li>
+          <li>A seat zone is created automatically around anyone who stays put for a few seconds; you can also draw zones by hand.</li>
           <li>Repeats merge into the open alert; per-track (120 s) and per-room (30 s) cooldowns stop duplicates.</li>
           <li>On alert a clip is kept from a 10 s pre-roll ring buffer plus 10 s post-roll. Nothing is recorded continuously.</li>
-          <li>Optionally, a local vision-language model (Ollama, qwen3-vl:8b) reviews a 6-frame contact sheet of each clip and gives an advisory verdict with a reason, shown on the alert card.</li>
+          <li>Optionally a local vision-language model reviews a 6-frame contact sheet of each clip and gives an advisory verdict with a reason.</li>
           <li>A staff member must <b>acknowledge</b> then <b>confirm or dismiss</b>. Only a human confirm marks a clip actionable; the system takes no action itself. Retention: unreviewed 48 h, dismissed 24 h, confirmed 90 d.</li>
         </ol>
         <ul>
           <li>Video never leaves the device. There is no server; clips live in page memory and vanish on reload.</li>
-          <li><b>Talking</b> is on but deliberately weak. Nothing at this distance resolves lip motion, so the only cue is repeated head turning; events are hard-capped at LOW confidence, can never reach HIGH, and are a nudge to look, not evidence. In a classroom the rule also requires a neighbour within reach; that requirement is relaxed here so one person testing alone can see it. Add a per-room audio level channel before trusting it.</li>
-          <li>Seat zones are saved per camera in this browser.</li>
+          <li>Seat zones, recordings and the trained model are saved per camera in this browser.</li>
         </ul>
+        </div>
       </details>
     </section>
   </div>
-  <section>
-    <h2>Alert queue <span id="qcount" class="badge b-new" style="display:none"></span><span class="spacer"></span>
-      <button class="small" id="clear-queue" title="Remove every alert waiting for review">Clear queue</button>
-      <button class="small danger" id="clear-all" title="Remove every alert and its clip from this page">Clear all</button></h2>
-    <div class="note">Alerts are suggestions from an automated detector. A staff member must <b>acknowledge</b> and <b>review</b> each one; nothing is flagged actionable until a person confirms it.</div>
+
+  <!-- ------------------------------------------------------------ queue -->
+  <aside class="card" style="position:sticky;top:66px">
+    <div class="card-head">
+      <h2>Alert queue</h2>
+      <span class="pill danger" id="qcount" hidden>0</span>
+      <div class="grow"></div>
+      <button class="btn sm ghost" id="clear-queue" title="Remove every alert waiting for review">Clear queue</button>
+      <button class="btn sm ghost" id="clear-all" title="Remove every alert and its clip from this page">Clear all</button>
+    </div>
+    <p class="note">Alerts are suggestions from an automated detector. A staff member must <b>acknowledge</b> and <b>review</b> each one; nothing is flagged actionable until a person confirms it.</p>
     <div id="queue"></div>
-  </section>
+  </aside>
 </main>
 
 <dialog id="clipdlg">
-  <div id="cliphead"></div>
-  <img id="clipimg" alt="clip frame">
-  <div class="clipbar">
-    <button id="clipplay">▶</button>
-    <input id="clipseek" type="range" min="0" max="0" value="0">
-    <span id="cliptime" style="width:70px;text-align:right;font-variant-numeric:tabular-nums"></span>
-    <button onclick="document.getElementById('clipdlg').close()">Close</button>
+  <div class="dlg-head" id="cliphead"></div>
+  <div class="dlg-body">
+    <img id="clipimg" alt="clip frame">
+    <div class="clipbar">
+      <button id="clipplay" class="btn">▶</button>
+      <input id="clipseek" type="range" min="0" max="0" value="0">
+      <span class="muted" id="cliptime" style="width:66px;text-align:right;font-variant-numeric:tabular-nums"></span>
+      <button class="btn" onclick="document.getElementById('clipdlg').close()">Close</button>
+    </div>
+    <div class="kv" id="clipmeta"></div>
   </div>
-  <div class="kv" id="clipmeta"></div>
 </dialog>
+<div id="toast"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core@4.22.0/dist/tf-core.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-converter@4.22.0/dist/tf-converter.min.js"></script>
@@ -217,7 +423,13 @@ const ls = { get: k => { try { return localStorage.getItem(k); } catch { return 
 $('#staff').value = ls.get('staff') || '';
 $('#staff').addEventListener('input', e => ls.set('staff', e.target.value));
 const nice = b => b.replace(/_/g, ' ');
-const badge = (cls, txt) => `<span class="badge b-${cls}">${txt}</span>`;
+const PILL = { new: 'danger', acknowledged: 'warn', confirmed: 'ok', dismissed: '', high: 'danger', medium: 'warn', low: '', actionable: 'ok', unreviewed: '', error: '' };
+const badge = (cls, txt) => `<span class="pill ${PILL[cls] ?? ''}">${txt}</span>`;
+let toastT = null;
+function toast(msg, isErr) {
+  const el = $('#toast'); el.textContent = msg; el.className = 'show' + (isErr ? ' err' : '');
+  clearTimeout(toastT); toastT = setTimeout(() => el.className = '', 4200);
+}
 const T0 = performance.now(), BASE_WALL = Date.now();
 const now = () => (performance.now() - T0) / 1000;
 const wall = t => new Date(BASE_WALL + t * 1000).toLocaleTimeString();
@@ -403,14 +615,14 @@ function handleEvent(room, ev, ts) {
   return a;
 }
 function ack(id) {
-  if (!staff()) return alert('Enter your staff ID first.');
+  if (!staff()) return toast('Enter your staff ID first, top right.', true);
   const a = alerts.find(x => x.id === id); if (a.status !== 'new') return;
   a.status = 'acknowledged'; a.acknowledged_by = staff(); a.acknowledged_at = now(); renderQueue(); renderLog();
 }
 function review(id, outcome, btn) {
-  if (!staff()) return alert('Enter your staff ID first.');
+  if (!staff()) return toast('Enter your staff ID first, top right.', true);
   const a = alerts.find(x => x.id === id);
-  if (a.status === 'new') return alert('Alert must be acknowledged before it can be reviewed.');
+  if (a.status === 'new') return toast('Acknowledge the alert before reviewing it.', true);
   if (a.status !== 'acknowledged') return;
   a.reviewed_by = staff(); a.reviewed_at = now(); a.notes = btn.closest('.alert').querySelector('textarea')?.value || '';
   if (outcome === 'confirm') { a.status = 'confirmed'; a.clip_flag = 'actionable'; } else { a.status = 'dismissed'; a.clip_flag = 'dismissed'; }
@@ -457,6 +669,12 @@ const clipz = v => Math.max(-10, Math.min(10, v));
 // boundaries a linear model cannot draw. Which one is used is decided by cross-validation,
 // not by hand.
 function predict(m, x) {
+  if (m.type === 'ensemble') {           // average the members' probabilities
+    const ps = m.members.map(mm => predict(mm, x).probs);
+    const p = ps[0].map((_, k) => ps.reduce((a, q) => a + q[k], 0) / ps.length);
+    let best = 0; for (let k = 1; k < p.length; k++) if (p[k] > p[best]) best = k;
+    return { label: m.labels[best], prob: p[best], probs: p };
+  }
   const z = x.map((v, i) => clipz((v - m.mu[i]) / m.sd[i]));
   let logits;
   if (m.type === 'mlp') {
@@ -548,12 +766,13 @@ const GRID = [
   { hidden: 16, epochs: 1200, lr: 0.15, l2: 3e-3, augment: 3 },
   { hidden: 24, epochs: 1600, lr: 0.10, l2: 1e-2, augment: 4 },
 ];
-let searchBest = null, searching = false, searchRounds = 0;
+let searchBest = null, searching = false, searchRounds = 0, trialsRun = 0;
 async function trainBest(rounds = 1, onProgress = () => {}) {
   for (let r = 0; r < rounds; r++) {
     searchRounds++;
     for (let i = 0; i < GRID.length; i++) {
       const o = { ...GRID[i], seed: searchRounds * 100 + i };
+      trialsRun++;
       onProgress(`round ${searchRounds}, config ${i + 1}/${GRID.length} (${o.hidden ? o.hidden + ' hidden units' : 'linear'})`);
       await sleep(0);                                   // keep the page responsive while it trains
       let cv;
@@ -570,6 +789,133 @@ async function trainBest(rounds = 1, onProgress = () => {}) {
   try { ls.set('model:v2', JSON.stringify(model)); } catch (e) { console.warn('model too large for storage', e); }
   return { acc: searchBest.acc, conf: searchBest.conf, tested: searchBest.tested, opts: searchBest.opts, rounds: searchRounds };
 }
+// =====================================================================================
+// Overnight training. A background thread samples model shapes and settings at random and
+// scores each with repeated stratified cross-validation, which is what extra hours actually
+// buy: a more thorough search and a less noisy estimate of which model is best. The best few
+// are refitted on everything and kept as an ensemble. Detection keeps running throughout.
+// =====================================================================================
+const OV = { folds: 5, repeats: 3, topK: 5, saveEveryMs: 120000 };
+let ovWorker = null, ovStart = 0, ovBudget = 0, ovTimer = null, ovLastSave = 0, ovHistory = [], ovLock = null, ovTop = null;
+function workerSource() {
+  // Arrow constants stringify without their name, so those two are re-declared explicitly.
+  return `const LEARN = ${JSON.stringify(LEARN)};
+const rng32 = ${rng32.toString()};
+const clipz = ${clipz.toString()};
+`   + [softmax, predict, fit, buildModel, crossVal].map(f => f.toString()).join('\n') + `
+function sample(rnd, i) {
+  const hidden = rnd() < 0.35 ? 0 : 4 + Math.floor(rnd() * 44);
+  const lg = (lo, hi) => Math.exp(Math.log(lo) + rnd() * (Math.log(hi) - Math.log(lo)));
+  return { hidden, epochs: Math.round(200 + rnd() * (hidden ? 2600 : 1800)),
+           lr: lg(0.03, 0.4), l2: lg(1e-4, 3e-2), augment: Math.floor(rnd() * 7), seed: i * 7919 + 1 };
+}
+onmessage = e => {
+  const { examples, budgetMs, folds, repeats, topK } = e.data;
+  const t0 = Date.now(), rnd = rng32((Date.now() ^ 0x9e3779b9) >>> 0);
+  let trials = 0, top = [], lastPost = 0;
+  while (Date.now() - t0 < budgetMs) {
+    const o = sample(rnd, trials); let sum = 0, n = 0;
+    for (let r = 0; r < repeats; r++) {
+      let cv; try { cv = crossVal(examples, { ...o, seed: o.seed + r * 977 }, folds); } catch (err) { break; }
+      if (cv.acc == null) break;
+      sum += cv.acc; n++;
+      if (Date.now() - t0 >= budgetMs) break;
+    }
+    trials++;
+    if (n) {
+      top.push({ acc: sum / n, opts: o });
+      top.sort((a, b) => b.acc - a.acc || a.opts.epochs - b.opts.epochs);
+      top = top.slice(0, topK);
+    }
+    if (Date.now() - lastPost > 1500) { lastPost = Date.now(); postMessage({ type: 'progress', trials, elapsed: Date.now() - t0, top }); }
+  }
+  postMessage({ type: 'done', trials, elapsed: Date.now() - t0, top });
+};`;
+}
+function ovFmt(ms) {
+  const s = Math.max(0, Math.round(ms / 1000)), h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60);
+  return h ? `${h}h ${String(m).padStart(2, '0')}m` : `${m}m ${String(s % 60).padStart(2, '0')}s`;
+}
+function ovRenderSpark() {
+  $('#ov-spark').innerHTML = ovHistory.slice(-40).map(v => `<i style="height:${Math.max(6, v * 100)}%"></i>`).join('');
+}
+function ovAdopt(top, { final } = {}) {
+  if (!top || !top.length) return null;
+  const members = top.map(t => buildModel(trainSet, t.opts));
+  model = members.length > 1
+    ? { type: 'ensemble', labels: members[0].labels, members, hidden: 0, n: trainSet.length,
+        acc: top[0].acc, opts: top[0].opts, trainedAt: Date.now() }
+    : { ...members[0], acc: top[0].acc };
+  model.n = trainSet.length;
+  model.perClass = Object.fromEntries(LEARN.labels.map(l => [l, trainSet.filter(e => e.y === l).length]).filter(([, n]) => n));
+  try { ls.set('model:v2', JSON.stringify(model)); } catch (e) { console.warn('model too large to store', e); }
+  for (const r of ROOMS) for (const st of r.tracks.values()) st.learnedGates = {};
+  renderTrainCounts();
+  return model;
+}
+function ovStop(msg) {
+  if (ovWorker) { ovWorker.terminate(); ovWorker = null; }
+  clearInterval(ovTimer); ovTimer = null;
+  ovLock?.release?.().catch(() => {}); ovLock = null;
+  $('#overnight-btn').hidden = false; $('#overnight-stop').hidden = true;
+  $('#ov-state').textContent = 'finished'; $('#ov-state').className = 'pill ok dot';
+  document.querySelector('#overnight-panel .bar')?.classList.remove('run');
+  if (msg) $('#train-result').innerHTML = msg;
+}
+async function ovStartRun() {
+  if (ovWorker) return;
+  const byLabel = Object.fromEntries(LEARN.labels.map(l => [l, trainSet.filter(e => e.y === l).length]));
+  if (!byLabel.normal || !LEARN.labels.some(l => l !== 'normal' && byLabel[l])) {
+    return toast('Record "normal" and at least one behavior before training.', true);
+  }
+  const hours = +$('#overnight-hours').value;
+  ovBudget = hours ? hours * 3600e3 : 30 * 24 * 3600e3;      // "until I stop it" = effectively unbounded
+  ovStart = Date.now(); ovLastSave = Date.now(); ovHistory = []; ovTop = null;   // let the first ensemble form before saving
+  try { ovLock = await navigator.wakeLock?.request('screen'); } catch {}
+  ovWorker = new Worker(URL.createObjectURL(new Blob([workerSource()], { type: 'text/javascript' })));
+  ovWorker.onerror = e => { console.error(e); ovStop(`<b style="color:var(--new)">Overnight training failed: ${e.message}</b>`); };
+  ovWorker.onmessage = e => {
+    const d = e.data;
+    trialsRun = d.trials;
+    $('#st-trials').textContent = d.trials;
+    if (d.top?.length) {
+      ovTop = d.top;
+      ovHistory.push(d.top[0].acc); ovRenderSpark();
+      const best = d.top[0];
+      $('#ov-detail').textContent = `${d.trials} configurations tried · best ${(best.acc * 100).toFixed(1)}% (${best.opts.hidden ? best.opts.hidden + ' hidden units' : 'linear'}, ${best.opts.epochs} epochs)`;
+      if (d.type === 'done' || Date.now() - ovLastSave > OV.saveEveryMs) { ovLastSave = Date.now(); ovAdopt(d.top); }
+    }
+    if (d.type === 'done') {
+      const m = ovAdopt(d.top, { final: true });
+      ovStop(`<b style="color:var(--ok)">Overnight training finished.</b> ${d.trials} configurations tried over ${ovFmt(d.elapsed)}. Kept the best ${d.top.length} as an ensemble, cross-validated accuracy <b>${(d.top[0].acc * 100).toFixed(1)}%</b> on ${trainSet.length} examples. Running now and saved in this browser.`);
+      renderTrainCounts();
+    }
+  };
+  ovWorker.postMessage({ examples: trainSet, budgetMs: ovBudget, folds: OV.folds, repeats: OV.repeats, topK: OV.topK });
+  $('#overnight-panel').hidden = false; $('#overnight-btn').hidden = true; $('#overnight-stop').hidden = false;
+  $('#ov-state').textContent = 'running'; $('#ov-state').className = 'pill accent dot live';
+  document.querySelector('#overnight-panel .bar').classList.add('run');
+  $('#train-result').innerHTML = `<b>Deep search running in the background.</b> Detection keeps working; you can leave this tab open overnight. Closing it stops the search, but the best model found so far is already saved.`;
+  ovTimer = setInterval(() => {
+    const el = Date.now() - ovStart;
+    $('#ov-bar').style.width = (hours ? Math.min(100, el / ovBudget * 100) : (el / 60000 % 100)) + '%';
+    $('#ov-state').textContent = hours ? `${ovFmt(el)} elapsed · ${ovFmt(ovBudget - el)} left` : `${ovFmt(el)} elapsed`;
+  }, 1000);
+}
+$('#overnight-btn').onclick = ovStartRun;
+$('#overnight-stop').onclick = () => {
+  const el = Date.now() - ovStart, top = ovTop;
+  ovStop();                                   // terminate first, then keep whatever it had found
+  if (top?.length) {
+    ovAdopt(top, { final: true });
+    $('#train-result').innerHTML = `<b>Overnight training stopped</b> after ${ovFmt(el)} and ${trialsRun} configurations. Kept the best ${top.length} as an ensemble, cross-validated accuracy <b>${(top[0].acc * 100).toFixed(1)}%</b>. Running now and saved in this browser.`;
+  } else {
+    $('#train-result').innerHTML = `<b>Overnight training stopped</b> after ${ovFmt(el)}, before any model had been scored.`;
+  }
+  renderTrainCounts();
+};
+addEventListener('beforeunload', e => { if (ovWorker) { e.preventDefault(); e.returnValue = ''; } });
+
 function recordWindows(room, ts) {
   if (!rec) return;
   if (ts >= rec.until) {
@@ -613,13 +959,20 @@ function autoTrain() { runTraining(true, 1); }
 // more model shapes against your own recordings.
 setInterval(() => { if ($('#keep-searching')?.checked && !searching && trainSet.length) runTraining(true, 1); }, 3000);
 function renderTrainCounts() {
-  const counts = LEARN.labels.map(l => `${nice(l)}: <b>${trainSet.filter(e => e.y === l).length}</b>`).join(' · ');
-  $('#train-counts').innerHTML = `Examples (2 s windows): ${counts}`;
-  $('#modelbadge').textContent = model ? `${model.hidden ? model.hidden + '-unit net' : 'linear'} · ${model.n} examples${model.acc != null ? ` · ${(model.acc * 100).toFixed(0)}% cross-validated` : ''}` : 'rules only';
-  $('#modelbadge').className = 'badge ' + (model ? 'b-confirmed' : 'b-low');
+  const counts = LEARN.labels.map(l => [l, trainSet.filter(e => e.y === l).length]);
+  $('#train-counts').innerHTML = counts.map(([l, n]) => `${nice(l)} <b>${n}</b>`).join(' · ');
+  $('#st-examples').textContent = trainSet.length;
+  $('#st-acc').innerHTML = model && model.acc != null ? `${(model.acc * 100).toFixed(0)}% <small>cross-validated</small>` : '—';
+  $('#st-shape').innerHTML = model ? (model.type === 'ensemble' ? `${model.members.length} <small>model ensemble</small>`
+    : model.hidden ? `${model.hidden} <small>hidden units</small>` : 'Linear') : '—';
+  $('#st-trials').textContent = trialsRun;
+  $('#modelbadge').textContent = model
+    ? `${model.type === 'ensemble' ? 'ensemble' : model.hidden ? model.hidden + '-unit net' : 'linear'} · ${model.n} examples${model.acc != null ? ` · ${(model.acc * 100).toFixed(0)}%` : ''}`
+    : 'rules only';
+  $('#modelbadge').className = 'pill ' + (model ? 'ok' : '');
 }
 $('#rec-btn').onclick = () => {
-  if (!ROOMS.some(r => r.tracks.size)) return alert('Add a camera and make sure a person is detected first.');
+  if (!ROOMS.some(r => r.tracks.size)) return toast('Add a camera and make sure a person is detected first.', true);
   const label = $('#rec-label').value; let count = 3; $('#rec-status').textContent = `get ready: ${label} in 3…`;
   const iv = setInterval(() => { count--; if (count > 0) $('#rec-status').textContent = `get ready: ${label} in ${count}…`; else { clearInterval(iv); rec = { label, until: now() + 6, last: 0, n: 0 }; $('#rec-status').textContent = `recording ${label}…`; } }, 1000);
 };
@@ -629,9 +982,10 @@ $('#export-btn').onclick = () => {
   const blob = new Blob([JSON.stringify({ version: 2, features: FEAT_NAMES, window_s: LEARN.windowS, labels: LEARN.labels, examples: trainSet, model }, null, 0)], { type: 'application/json' });
   const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: `classroom-training-${new Date().toISOString().slice(0, 10)}.json` }); a.click();
 };
+$('#import-btn').onclick = () => $('#import-file').click();
 $('#import-file').onchange = async e => {
   try { const d = JSON.parse(await e.target.files[0].text()); if (!Array.isArray(d.examples)) throw new Error('no examples'); trainSet.push(...d.examples.filter(x => Array.isArray(x.x) && LEARN.labels.includes(x.y))); saveTrain(); renderTrainCounts(); $('#train-result').textContent = `Imported ${d.examples.length} examples. Press Train.`; }
-  catch (err) { alert('Could not import: ' + err.message); }
+  catch (err) { toast('Could not import: ' + err.message, true); }
   e.target.value = '';
 };
 $('#reset-btn').onclick = () => { if (!confirm('Delete all recorded examples and the trained model?')) return; trainSet = []; model = null; ls.set('train:v2', '[]'); ls.set('model:v2', 'null'); renderTrainCounts(); $('#train-result').textContent = ''; };
@@ -725,7 +1079,7 @@ function drawSkeleton(c, kp, W, H) {
 function makeRoom(id, name, kind) {
   const el = document.createElement('div'); el.className = 'room'; el.id = 'room-' + id;
   el.innerHTML = `<canvas width="640" height="360"></canvas><span class="rec">● REC clip</span>
-    <div class="tools"><button class="small zone-draw" title="Drag on the video to add a seat zone">Draw zone</button><button class="small zone-clear" title="Remove all seat zones">Clear</button><button class="small room-close" title="Remove this room">✕</button></div>
+    <div class="tools"><button class="btn sm zone-draw" title="Drag on the video to add a seat zone">Draw zone</button><button class="btn sm zone-clear" title="Remove all seat zones">Clear zones</button><button class="btn sm room-close" title="Remove this room">✕</button></div>
     <div class="label"><span>${name}</span><span class="stats"></span></div>`;
   $('#grid').appendChild(el);
   const room = { id, name, kind, el, canvas: el.querySelector('canvas'), statusEl: el.querySelector('.stats'), tracks: new Map(), alertTracks: new Map(),
@@ -796,7 +1150,7 @@ async function addCamera(deviceId) {
   const id = 'cam_' + camCount, name = `Camera ${camCount}` + (deviceId ? '' : ' (default)');
   const room = makeRoom(id, name, 'live');
   const overlay = document.createElement('div'); overlay.className = 'overlay'; room.el.appendChild(overlay);
-  const status = (msg, retry) => { overlay.innerHTML = `<p>${msg}</p>` + (retry ? '<button class="primary">Retry</button>' : ''); overlay.style.display = ''; if (retry) overlay.querySelector('button').onclick = retry; };
+  const status = (msg, retry) => { overlay.innerHTML = `<p>${msg}</p>` + (retry ? '<button class="btn primary">Retry</button>' : ''); overlay.style.display = ''; if (retry) overlay.querySelector('button').onclick = retry; };
   status('Requesting camera permission…');
   let stream;
   try {
@@ -913,7 +1267,7 @@ async function refreshDevices() {
     sel.value = cur;
   } catch {}
 }
-$('#addcam').onclick = () => { if (!navigator.mediaDevices?.getUserMedia) return alert('This browser cannot access cameras. Use Chrome, Edge, Firefox or Safari over HTTPS.'); addCamera($('#devices').value); };
+$('#addcam').onclick = () => { if (!navigator.mediaDevices?.getUserMedia) return toast('This browser cannot access cameras. Use Chrome, Edge, Firefox or Safari over HTTPS.', true); addCamera($('#devices').value); };
 refreshDevices();
 
 // =====================================================================================
@@ -1047,39 +1401,42 @@ async function verifyAlert(a, manual) {
     const v = parseVerdict(txt);
     Object.assign(a, { ai_verdict: v.verdict, ai_confidence: v.confidence, ai_summary: v.summary, ai_reason: v.reason, ai_model: VER.model, ai_ms: Math.round(performance.now() - t0) });
     renderVerStatus(VER.model + ' · ready', 'b-confirmed');
-  } catch (e) { Object.assign(a, { ai_verdict: 'error', ai_confidence: null, ai_summary: '', ai_reason: 'verifier unavailable: ' + e.message, ai_model: VER.model }); if (manual) alert('AI second opinion failed: ' + e.message); }
+  } catch (e) { Object.assign(a, { ai_verdict: 'error', ai_confidence: null, ai_summary: '', ai_reason: 'verifier unavailable: ' + e.message, ai_model: VER.model }); if (manual) toast('AI second opinion failed: ' + e.message, true); }
   a.ai_busy = false; renderQueue(); renderLog();
 }
 const AI_BADGE = { likely_real: ['confirmed', 'AI: likely real'], likely_false_alarm: ['low', 'AI: likely false alarm'], unclear: ['acknowledged', 'AI: unclear'], error: ['low', 'AI: unavailable'] };
 function aiLine(a) {
-  if (a.ai_busy) return '<div class="meta">AI second opinion: asking the model…</div>';
-  if (!a.ai_verdict) return a.clip ? `<div class="meta">AI second opinion: ${VER.on ? 'pending' : 'off'} <button class="small" onclick="verifyAlert(alerts.find(x => x.id === '${a.id}'), true)">run now</button></div>` : '';
+  if (a.ai_busy) return '<div class="ai">Asking the model…</div>';
+  if (!a.ai_verdict) return a.clip ? `<div class="meta">AI second opinion ${VER.on ? 'pending' : 'off'} <button class="btn sm" style="margin-left:4px" onclick="verifyAlert(alerts.find(x => x.id === '${a.id}'), true)">Run now</button></div>` : '';
   const [cls, txt] = AI_BADGE[a.ai_verdict] || ['low', 'AI: ' + a.ai_verdict];
-  return `<div class="meta"><span class="badge b-${cls}">${txt}${a.ai_confidence != null ? ' ' + Math.round(a.ai_confidence * 100) + '%' : ''}</span> ${a.ai_summary || ''}${a.ai_reason ? ' — ' + a.ai_reason : ''} <span style="opacity:.6">(${a.ai_model}${a.ai_ms ? ', ' + (a.ai_ms / 1000).toFixed(1) + ' s' : ''}; advisory only)</span></div>`;
+  return `<div class="ai">${badge(cls, txt + (a.ai_confidence != null ? ' ' + Math.round(a.ai_confidence * 100) + '%' : ''))} ${a.ai_summary || ''}${a.ai_reason ? ' — ' + a.ai_reason : ''}<div class="muted" style="margin-top:3px">${a.ai_model}${a.ai_ms ? ' · ' + (a.ai_ms / 1000).toFixed(1) + ' s' : ''} · advisory only</div></div>`;
 }
 
 // =====================================================================================
 // Queue, log, clip viewer
 // =====================================================================================
 function renderQueue() {
-  const q = alerts.filter(a => a.status === 'new').sort((a, b) => a.first_ts - b.first_ts).concat(alerts.filter(a => a.status === 'acknowledged').sort((a, b) => a.first_ts - b.first_ts));
-  $('#qcount').style.display = q.length ? '' : 'none'; $('#qcount').textContent = q.length;
+  const q = alerts.filter(a => a.status === 'new').sort((a, b) => a.first_ts - b.first_ts)
+    .concat(alerts.filter(a => a.status === 'acknowledged').sort((a, b) => a.first_ts - b.first_ts));
+  $('#qcount').hidden = !q.length; $('#qcount').textContent = q.length;
   const el = $('#queue');
-  if (!q.length) { el.innerHTML = '<div class="empty">No alerts awaiting review.</div>'; return; }
+  if (!q.length) { el.innerHTML = '<div class="empty"><strong>Nothing to review</strong>Alerts appear here the moment a behavior is sustained long enough.</div>'; return; }
   const notes = Object.fromEntries([...el.querySelectorAll('textarea')].map(t => [t.closest('.alert').dataset.id, t.value]));
   el.innerHTML = q.map(a => `
-    <div class="alert" data-id="${a.id}">
-      <div class="row"><b>${nice(a.behavior)}</b> ${badge(a.confidence, a.confidence)} ${badge(a.status, a.status)} <span style="color:var(--muted)">${roomName(a.room_id)}</span></div>
-      <div class="meta">${wall(a.first_ts)} · sustained ${a.sustained.toFixed(1)}s · seen ${a.occurrences}× · tracks ${a.track_ids.join(', ')}</div>
-      <div class="meta">${Object.entries(a.evidence).map(([k, v]) => `${k}=${v}`).join(' · ')}</div>
-      ${a.behavior === 'talking' ? '<div class="meta" style="color:var(--ack)">Video-only cue, capped at low confidence. Not evidence on its own.</div>' : ''}
+    <div class="alert s-${a.status}" data-id="${a.id}">
+      <div class="row"><span class="title">${nice(a.behavior)}</span> ${badge(a.confidence, a.confidence)} ${badge(a.status, a.status)}
+        <div class="grow"></div><span class="muted">${roomName(a.room_id)}</span></div>
+      <div class="meta">${wall(a.first_ts)} · sustained <b>${a.sustained.toFixed(1)}s</b> · seen ${a.occurrences}× · track ${a.track_ids.join(', ')}</div>
+      <div class="meta">${Object.entries(a.evidence).map(([k, v]) => `${k.replace(/_/g, ' ')} <b>${v}</b>`).join(' · ')}</div>
+      ${a.behavior === 'talking' ? '<div class="meta" style="color:var(--warn)">Video-only cue, capped at low confidence. Not evidence on its own.</div>' : ''}
       ${aiLine(a)}
       ${a.status === 'acknowledged' ? `<div class="meta">acknowledged by <b>${a.acknowledged_by}</b></div><textarea rows="2" placeholder="Review notes (optional)">${notes[a.id] || ''}</textarea>` : ''}
       <div class="actions">
-        ${a.clip ? `<button onclick="openClip('${a.id}')">View clip</button>` : '<button disabled>clip saving…</button>'}
-        ${a.status === 'new' ? `<button class="primary" onclick="ack('${a.id}')">Acknowledge</button>` :
-          `<button class="ok" onclick="review('${a.id}','confirm',this)">Confirm concern</button><button class="danger" onclick="review('${a.id}','dismiss',this)">Dismiss</button>`}
-        <button class="small" onclick="clearAlert('${a.id}')" title="Remove this alert without reviewing it">Clear</button>
+        ${a.clip ? `<button class="btn sm" onclick="openClip('${a.id}')">View clip</button>` : '<button class="btn sm" disabled>Saving clip…</button>'}
+        ${a.status === 'new' ? `<button class="btn sm primary" onclick="ack('${a.id}')">Acknowledge</button>` :
+          `<button class="btn sm ok" onclick="review('${a.id}','confirm',this)">Confirm concern</button><button class="btn sm danger" onclick="review('${a.id}','dismiss',this)">Dismiss</button>`}
+        <div class="grow"></div>
+        <button class="btn sm ghost" onclick="clearAlert('${a.id}')" title="Remove this alert without reviewing it">Clear</button>
       </div>
     </div>`).join('');
 }
@@ -1087,12 +1444,12 @@ function renderLog() {
   const fs = $('#f-status').value, fr = $('#f-room').value, fb = $('#f-behavior').value;
   const rows = alerts.filter(a => (!fs || a.status === fs) && (!fr || a.room_id === fr) && (!fb || a.behavior === fb));
   $('#log').innerHTML = rows.length ? rows.map(a => `
-    <tr class="clickable" onclick="${a.clip ? `openClip('${a.id}')` : ''}">
+    <tr class="${a.clip ? 'clickable' : ''}" onclick="${a.clip ? `openClip('${a.id}')` : ''}">
       <td>${wall(a.first_ts)}</td><td>${roomName(a.room_id)}</td><td>${nice(a.behavior)}</td>
       <td>${badge(a.confidence, a.confidence)}</td><td>${a.ai_verdict ? badge((AI_BADGE[a.ai_verdict] || ['low'])[0], nice(a.ai_verdict.replace('likely_', '')) + (a.ai_confidence != null ? ' ' + Math.round(a.ai_confidence * 100) + '%' : '')) : '—'}</td><td>${badge(a.status, a.status)}</td>
       <td>${a.reviewed_by || a.acknowledged_by || ''}</td><td>${a.clip ? badge(a.clip_flag === 'actionable' ? 'confirmed' : 'low', a.clip_flag) : 'saving…'}</td><td>${expiry(a)}</td>
-      <td><button class="small" onclick="event.stopPropagation(); clearAlert('${a.id}')">Clear</button></td>
-    </tr>`).join('') : '<tr><td colspan="10" class="empty">No incidents yet.</td></tr>';
+      <td><button class="btn sm ghost" onclick="event.stopPropagation(); clearAlert('${a.id}')">Clear</button></td>
+    </tr>`).join('') : '<tr><td colspan="10" class="empty"><strong>No incidents yet</strong>Reviewed and cleared alerts appear here.</td></tr>';
 }
 ['#f-status', '#f-room', '#f-behavior'].forEach(s => $(s).onchange = renderLog);
 // Clearing removes an alert from this page. It is not a review: nothing is marked actionable

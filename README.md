@@ -115,15 +115,22 @@ Two layers run side by side and feed the same alert keys (so they merge, never d
   model's prediction also sits behind a sustained gate, so a single confident frame never alerts.
 
 Training happens where the data is. The demo records labelled 2-second windows from your own
-camera (pose numbers only, never video), searches the grid after every recording, and reports
-a cross-validated accuracy. "Train harder" searches more rounds; "keep searching" runs
-indefinitely, keeping the best model found. Export the examples and
+camera (pose numbers only, never video), searches after every recording, and reports a
+cross-validated accuracy. Export the examples and
 `python scripts/train_behavior.py export.json --search -o data/behavior_model.json` fits the
 same grid for the backend.
 
-More epochs stop helping quickly on a small set. What moves accuracy is more recordings, from
-more people, at more camera angles and distances. Neither layer is, or can be, "perfect": that
-is why every alert goes to a human for review.
+**Overnight training** runs a much wider search in a Web Worker, so detection keeps running and
+the page stays responsive: model shapes and strengths are sampled at random and each is scored
+by *repeated* stratified cross-validation, which is what extra hours actually buy — a more
+thorough search and a less noisy estimate of which model is best. The best five are refitted on
+everything and kept as an ensemble whose members vote. Pick 1, 4, 8 or 12 hours, or run until
+stopped; the best model so far is saved every couple of minutes, so stopping early or closing
+the tab keeps the work. A screen wake lock is requested where the browser supports it.
+
+More epochs on a fixed set stop helping quickly. Search and ensembling help a bit more. What
+really moves accuracy is more recordings, from more people, at more camera angles and
+distances. Neither layer is, or can be, "perfect": that is why every alert goes to a human.
 
 All classifiers feed a per-frame boolean into a `SustainedCondition` gate
 (`behavior/sustain.py`). The gate opens only when the condition has held for
