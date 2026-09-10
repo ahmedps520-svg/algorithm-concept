@@ -120,6 +120,11 @@ cross-validated accuracy. Export the examples and
 `python scripts/train_behavior.py export.json --search -o data/behavior_model.json` fits the
 same grid for the backend.
 
+Clips are held in page memory, so the demo enforces its own budget: full frames are kept for
+alerts still awaiting review plus the ten most recent, and older clips are reduced to a single
+thumbnail. Without that, an hour of alerts grows past a gigabyte and the browser kills the tab.
+The header shows heap use and how many clips are held.
+
 **Overnight training** runs a much wider search in a Web Worker, so detection keeps running and
 the page stays responsive: model shapes and strengths are sampled at random and each is scored
 by *repeated* stratified cross-validation, which is what extra hours actually buy — a more

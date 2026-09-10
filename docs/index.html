@@ -202,6 +202,7 @@
 <header class="topbar">
   <div class="brand"><span class="mark"></span>Classroom Monitor</div>
   <span class="pill ok dot" title="Video never leaves this device. Detection runs in your browser; clips are kept in page memory only.">On-device · nothing uploaded</span>
+  <span class="pill" id="mem" hidden title="Clips are held in page memory. Older ones are reduced to a single frame so the tab does not run out."></span>
   <div class="grow"></div>
   <label class="field">Staff ID <input id="staff" placeholder="e.g. j.smith" title="Required to acknowledge or review alerts"></label>
 </header>
@@ -415,6 +416,10 @@ function applyPreset(name) {
 }
 const DEBOUNCE = { perTrack: 120, perRoom: 30 };
 const CLIP = { pre: 10, post: 10, fps: 10, w: 320, h: 180 };
+// Every saved clip is ~200 JPEG frames held in page memory (a few MB each). Left unbounded,
+// an hour of alerts grows to hundreds of MB and the tab is killed. Full frames are kept for
+// alerts still awaiting review plus the most recent few; older clips keep one thumbnail.
+const MEM = { clips: 10, alerts: 300, panicMB: 1400 };
 const RETENTION = { unreviewed_h: 48, dismissed_h: 24, actionable_d: 90 };
 const TRACK_TTL = 5, MIN_TRACK_AGE = 3, MIN_TRACK_AGE_S = 5;   // a track must also have existed this long before it can alert
 const $ = s => document.querySelector(s);
@@ -612,8 +617,44 @@ function handleEvent(room, ev, ts) {
               sustained: ev.sustained, first_ts: ts, last_ts: ts, evidence: ev.evidence, status: 'new', occurrences: 1, clip: null, clip_flag: 'unreviewed',
               acknowledged_by: null, reviewed_by: null, notes: '' };
   alerts.unshift(a); lastByKey.set(key, ts); lastByRoomBeh.set(rb, ts); openByKey.set(key, a.id);
+  trimMemory();
   return a;
 }
+function heapMB() { const m = performance.memory; return m ? m.usedJSHeapSize / 1048576 : null; }
+function dropFrames(a) {
+  const f = a.clip.frames;
+  if (!f) return;
+  a.clip.thumb = (f[Math.min(f.length - 1, Math.round(CLIP.pre * CLIP.fps))] || f[0]).jpg;
+  a.clip.count = f.length;
+  a.clip.frames = null;
+  a.clip.dropped = true;
+}
+function trimMemory() {
+  // 1. cap the alert list, discarding reviewed ones first: they have already served their purpose
+  if (alerts.length > MEM.alerts) {
+    const byAge = [...alerts].sort((x, y) => x.first_ts - y.first_ts);
+    const doomed = new Set();
+    let over = alerts.length - MEM.alerts;
+    for (const pass of [a => a.status === 'confirmed' || a.status === 'dismissed', () => true]) {
+      for (const a of byAge) { if (over <= 0) break; if (!doomed.has(a) && pass(a)) { doomed.add(a); over--; } }
+    }
+    for (const a of doomed) { const i = alerts.indexOf(a); if (i >= 0) alerts.splice(i, 1); }
+  }
+  // 2. keep full frames for whatever a human still has to look at, then the most recent
+  const budget = heapMB() > MEM.panicMB ? 2 : MEM.clips;      // safety valve if the heap is already large
+  const withFrames = alerts.filter(a => a.clip?.frames);
+  const pending = a => (a.status === 'new' || a.status === 'acknowledged' ? 0 : 1);
+  withFrames.sort((x, y) => pending(x) - pending(y) || y.first_ts - x.first_ts);
+  withFrames.slice(budget).forEach(dropFrames);
+}
+function renderMem() {
+  const el = $('#mem'), mb = heapMB(), kept = alerts.filter(a => a.clip?.frames).length;
+  el.hidden = false;
+  el.textContent = (mb != null ? `${mb.toFixed(0)} MB · ` : '') + `${kept} clip${kept === 1 ? '' : 's'} in memory`;
+  el.className = 'pill' + (mb != null && mb > MEM.panicMB ? ' danger' : '');
+}
+setInterval(() => { trimMemory(); renderMem(); }, 5000);
+
 function ack(id) {
   if (!staff()) return toast('Enter your staff ID first, top right.', true);
   const a = alerts.find(x => x.id === id); if (a.status !== 'new') return;
@@ -880,7 +921,7 @@ async function ovStartRun() {
     $('#st-trials').textContent = d.trials;
     if (d.top?.length) {
       ovTop = d.top;
-      ovHistory.push(d.top[0].acc); ovRenderSpark();
+      ovHistory.push(d.top[0].acc); if (ovHistory.length > 200) ovHistory.shift(); ovRenderSpark();
       const best = d.top[0];
       $('#ov-detail').textContent = `${d.trials} configurations tried · best ${(best.acc * 100).toFixed(1)}% (${best.opts.hidden ? best.opts.hidden + ' hidden units' : 'linear'}, ${best.opts.epochs} epochs)`;
       if (d.type === 'done' || Date.now() - ovLastSave > OV.saveEveryMs) { ovLastSave = Date.now(); ovAdopt(d.top); }
@@ -1011,7 +1052,7 @@ function processFrame(room, dets, ts) {
     clipCanvas.getContext('2d').drawImage(room.canvas, 0, 0, CLIP.w, CLIP.h);
     const jpg = clipCanvas.toDataURL('image/jpeg', 0.6);
     room.ring.push({ ts, jpg }); while (room.ring.length > CLIP.pre * CLIP.fps) room.ring.shift();
-    for (const r of room.recorders) { r.frames.push({ ts, jpg }); if (ts - r.trigger >= CLIP.post) { r.done = true; r.alert.clip = { frames: r.frames, created: ts, trigger: r.trigger }; renderQueue(); renderLog(); if (VER.on) verifyAlert(r.alert, false); } }
+    for (const r of room.recorders) { r.frames.push({ ts, jpg }); if (ts - r.trigger >= CLIP.post) { r.done = true; r.alert.clip = { frames: r.frames, created: ts, trigger: r.trigger }; renderQueue(); renderLog(); if (VER.on) verifyAlert(r.alert, false); trimMemory(); } }
     room.recorders = room.recorders.filter(r => !r.done);
   }
   const present = new Set(dets.map(d => d.id)), states = [...room.tracks.values()].filter(s => present.has(s.id));
@@ -1022,6 +1063,7 @@ function processFrame(room, dets, ts) {
       if (a) { room.recorders.push({ alert: a, trigger: ts, frames: [...room.ring], done: false }); renderQueue(); renderLog(); flash(room); }
     }
   }
+  for (const [id, t] of room.alertTracks) if (ts - t > 30) room.alertTracks.delete(id);
   recordWindows(room, ts);
   room.el.classList.toggle('recording', room.recorders.length > 0);
   room.el.classList.toggle('alerting', alerts.some(a => a.room_id === room.id && (a.status === 'new' || a.status === 'acknowledged')));
@@ -1187,15 +1229,18 @@ async function addCamera(deviceId) {
   const iou = (a, b) => { const ix = Math.max(0, Math.min(a[2], b[2]) - Math.max(a[0], b[0])), iy = Math.max(0, Math.min(a[3], b[3]) - Math.max(a[1], b[1])), inter = ix * iy;
     return inter / ((a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter || 1); };
   function stableId(detId, box, ts, claimed) {
-    let id = stable.byDet.get(detId);
+    const seen = stable.byDet.get(detId), id = seen?.sid;
+    if (seen) seen.ts = ts;
     if (id != null && stable.tracks.has(id) && !claimed.has(id)) { const t = stable.tracks.get(id); t.box = box; t.ts = ts; claimed.add(id); return id; }
     let best = null, bestIou = 0.25;
     for (const [sid, t] of stable.tracks) { if (claimed.has(sid)) continue; const v = iou(box, t.box); if (v > bestIou) { bestIou = v; best = sid; } }
     if (best == null) { best = stable.next++; stable.tracks.set(best, { box, ts, born: ts }); } else { const t = stable.tracks.get(best); t.box = box; t.ts = ts; }
-    stable.byDet.set(detId, best); claimed.add(best); return best;
+    stable.byDet.set(detId, { sid: best, ts }); claimed.add(best); return best;
   }
   function pruneStable(ts) {
-    for (const [sid, t] of stable.tracks) if (ts - t.ts > 2) { stable.tracks.delete(sid); for (const [d, s2] of stable.byDet) if (s2 === sid) stable.byDet.delete(d); }
+    // A tracker that hands out a fresh id every frame would otherwise grow this map forever.
+    for (const [d, v] of stable.byDet) if (ts - v.ts > 5) stable.byDet.delete(d);
+    for (const [sid, t] of stable.tracks) if (ts - t.ts > 2) stable.tracks.delete(sid);
   }
   (async function loop() {
     while (room.active) {
@@ -1381,7 +1426,8 @@ function parseVerdict(text) {
   return { verdict: v, confidence: Math.max(0, Math.min(1, conf)), summary: String(d.what_is_happening || '').slice(0, 400), reason: String(d.reason || '').slice(0, 400) };
 }
 async function verifyAlert(a, manual) {
-  if (!a.clip || a.ai_busy) return; a.ai_busy = true; renderQueue();
+  if (!a.clip?.frames) { if (manual) toast('That clip is no longer in memory, so it cannot be reviewed by the model.', true); return; }
+  if (a.ai_busy) return; a.ai_busy = true; renderQueue();
   const t0 = performance.now();
   try {
     const { b64, used } = await contactSheet(a);
@@ -1473,7 +1519,19 @@ $('#clear-queue').onclick = () => clearAlerts('queue');
 $('#clear-all').onclick = () => clearAlerts('all');
 let clip = null, clipTimer = null, clipIdx = 0;
 function openClip(id) {
-  const a = alerts.find(x => x.id === id); if (!a?.clip) return; clip = a;
+  const a = alerts.find(x => x.id === id); if (!a?.clip) return;
+  if (!a.clip.frames) {                       // frames were released to keep the page alive
+    clip = null;
+    $('#cliphead').innerHTML = `<b>${nice(a.behavior)}</b> · ${roomName(a.room_id)} · ${wall(a.clip.created)}`;
+    $('#clipimg').src = a.clip.thumb || '';
+    $('#clipseek').max = 0; $('#cliptime').textContent = '';
+    $('#clipmeta').innerHTML = `<span>Clip</span><b>${a.clip.count} frames were released to keep the page from running out of memory. One frame from the moment of the alert is kept.</b>
+      <span>Alert</span><b>${a.id} · ${badge(a.status, a.status)}</b>
+      <span>Reviewer</span><b>${a.reviewed_by || a.acknowledged_by || '— (not reviewed)'}</b>`;
+    $('#clipdlg').showModal();
+    return;
+  }
+  clip = a;
   const f = a.clip.frames;
   $('#cliphead').innerHTML = `<b>${nice(a.behavior)}</b> · ${roomName(a.room_id)} · ${wall(f[0].ts)} → ${wall(f[f.length - 1].ts)} · ${f.length} frames (${CLIP.pre}s pre-roll + ${CLIP.post}s post-roll)`;
   $('#clipmeta').innerHTML = `<span>Alert</span><b>${a.id} · ${badge(a.status, a.status)} · clip ${badge(a.clip_flag === 'actionable' ? 'confirmed' : 'low', a.clip_flag)}</b>
@@ -1486,10 +1544,10 @@ function openClip(id) {
 function showFrame(i) { clipIdx = i; const f = clip.clip.frames[i]; $('#clipimg').src = f.jpg; $('#clipseek').value = i; const off = f.ts - clip.clip.trigger; $('#cliptime').textContent = (off >= 0 ? '+' : '') + off.toFixed(1) + 's'; }
 function play() { clearInterval(clipTimer); $('#clipplay').textContent = '⏸'; clipTimer = setInterval(() => { if (clipIdx + 1 >= clip.clip.frames.length) return pause(); showFrame(clipIdx + 1); }, 1000 / CLIP.fps); }
 function pause() { clearInterval(clipTimer); clipTimer = null; $('#clipplay').textContent = '▶'; }
-$('#clipplay').onclick = () => clipTimer ? pause() : play();
-$('#clipseek').oninput = e => { pause(); showFrame(+e.target.value); };
+$('#clipplay').onclick = () => { if (!clip) return; clipTimer ? pause() : play(); };
+$('#clipseek').oninput = e => { if (!clip) return; pause(); showFrame(+e.target.value); };
 $('#clipdlg').addEventListener('close', pause);
-renderQueue(); renderLog(); renderTrainCounts();
+renderQueue(); renderLog(); renderTrainCounts(); renderMem();
 if (model) $('#train-result').innerHTML = `<b style="color:var(--ok)">Model restored</b> from this browser: ${model.n} examples${model.acc != null ? `, ${(model.acc * 100).toFixed(0)}% held-out` : ''}, trained ${new Date(model.trainedAt).toLocaleString()}. It runs as soon as a camera is added.`;
 else if (trainSet.length) autoTrain();
 </script>
