@@ -125,8 +125,9 @@ alerts still awaiting review plus the ten most recent, and older clips are reduc
 thumbnail. Without that, an hour of alerts grows past a gigabyte and the browser kills the tab.
 The header shows heap use and how many clips are held.
 
-**Overnight training** runs a much wider search in a Web Worker, so detection keeps running and
-the page stays responsive: model shapes and strengths are sampled at random and each is scored
+**All training runs in a Web Worker**, never on the page thread: one model fit takes seconds, and
+doing that on the page froze the tab, which the browser reports as unresponsive and eventually
+kills. Overnight training uses the same worker for a much wider search: model shapes and strengths are sampled at random and each is scored
 by *repeated* stratified cross-validation, which is what extra hours actually buy — a more
 thorough search and a less noisy estimate of which model is best. The best five are refitted on
 everything and kept as an ensemble whose members vote. Pick 1, 4, 8 or 12 hours, or run until

@@ -650,7 +650,9 @@ function trimMemory() {
 function renderMem() {
   const el = $('#mem'), mb = heapMB(), kept = alerts.filter(a => a.clip?.frames).length;
   el.hidden = false;
-  el.textContent = (mb != null ? `${mb.toFixed(0)} MB · ` : '') + `${kept} clip${kept === 1 ? '' : 's'} in memory`;
+  const tensors = window.tf?.memory ? tf.memory().numTensors : null;
+  el.textContent = (mb != null ? `${mb.toFixed(0)} MB · ` : '') + `${kept} clip${kept === 1 ? '' : 's'}`
+    + (tensors != null ? ` · ${tensors} tensors` : '') + (searching ? ` · training (${searching.mode})` : '');
   el.className = 'pill' + (mb != null && mb > MEM.panicMB ? ' danger' : '');
 }
 setInterval(() => { trimMemory(); renderMem(); }, 5000);
@@ -701,7 +703,7 @@ function windowFeatures(st, ts) {
 let trainSet = [], model = null, rec = null;
 try { trainSet = JSON.parse(ls.get('train:v2') || '[]'); } catch {}
 try { model = JSON.parse(ls.get('model:v2') || 'null'); } catch {}
-const saveTrain = () => { trainSet = trainSet.slice(-4000); ls.set('train:v2', JSON.stringify(trainSet)); };
+const saveTrain = () => { trainSet = trainSet.slice(-1500); ls.set('train:v2', JSON.stringify(trainSet)); };
 function softmax(z) { const m = Math.max(...z), e = z.map(v => Math.exp(v - m)), s = e.reduce((a, b) => a + b, 0); return e.map(v => v / s); }
 const rng32 = a => () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
 const clipz = v => Math.max(-10, Math.min(10, v));
@@ -798,8 +800,14 @@ function crossVal(examples, o, k = 5) {
   }
   return { acc: tot ? ok / tot : null, tested: tot, conf };
 }
-// Search over model shapes and strengths instead of trusting one guess. Each config is scored
-// by cross-validation; the winner is refitted on everything.
+// =====================================================================================
+// All model fitting happens in a Web Worker, never on the page thread. One fit takes
+// seconds; doing that here froze the tab, which the browser reports as an unresponsive page
+// and eventually kills. The worker searches model shapes, scores each by repeated stratified
+// cross-validation, fits the best few on everything and posts the finished weights back.
+// =====================================================================================
+const SEARCH = { folds: 5, repeats: 3, topK: 5, checkpointMs: 120000 };
+const BUDGET = { auto: 8000, train: 20000, harder: 90000, idle: 20000 };
 const GRID = [
   { hidden: 0, epochs: 400, lr: 0.15, l2: 1e-3, augment: 0 },
   { hidden: 0, epochs: 1200, lr: 0.10, l2: 1e-2, augment: 2 },
@@ -807,55 +815,32 @@ const GRID = [
   { hidden: 16, epochs: 1200, lr: 0.15, l2: 3e-3, augment: 3 },
   { hidden: 24, epochs: 1600, lr: 0.10, l2: 1e-2, augment: 4 },
 ];
-let searchBest = null, searching = false, searchRounds = 0, trialsRun = 0;
-async function trainBest(rounds = 1, onProgress = () => {}) {
-  for (let r = 0; r < rounds; r++) {
-    searchRounds++;
-    for (let i = 0; i < GRID.length; i++) {
-      const o = { ...GRID[i], seed: searchRounds * 100 + i };
-      trialsRun++;
-      onProgress(`round ${searchRounds}, config ${i + 1}/${GRID.length} (${o.hidden ? o.hidden + ' hidden units' : 'linear'})`);
-      await sleep(0);                                   // keep the page responsive while it trains
-      let cv;
-      try { cv = crossVal(trainSet, o); } catch (e) { console.warn('config failed', o, e); continue; }
-      if (cv.acc == null) continue;
-      if (!searchBest || cv.acc > searchBest.acc + 1e-9) searchBest = { acc: cv.acc, conf: cv.conf, tested: cv.tested, opts: o };
-      await sleep(0);
-    }
-  }
-  if (!searchBest) return { error: 'not enough examples to score a model yet.' };
-  model = buildModel(trainSet, searchBest.opts);
-  model.acc = searchBest.acc; model.conf = searchBest.conf; model.tested = searchBest.tested;
-  model.perClass = Object.fromEntries(LEARN.labels.map(l => [l, trainSet.filter(e => e.y === l).length]).filter(([, n]) => n));
-  try { ls.set('model:v2', JSON.stringify(model)); } catch (e) { console.warn('model too large for storage', e); }
-  return { acc: searchBest.acc, conf: searchBest.conf, tested: searchBest.tested, opts: searchBest.opts, rounds: searchRounds };
-}
-// =====================================================================================
-// Overnight training. A background thread samples model shapes and settings at random and
-// scores each with repeated stratified cross-validation, which is what extra hours actually
-// buy: a more thorough search and a less noisy estimate of which model is best. The best few
-// are refitted on everything and kept as an ensemble. Detection keeps running throughout.
-// =====================================================================================
-const OV = { folds: 5, repeats: 3, topK: 5, saveEveryMs: 120000 };
-let ovWorker = null, ovStart = 0, ovBudget = 0, ovTimer = null, ovLastSave = 0, ovHistory = [], ovLock = null, ovTop = null;
+let trainWorker = null, searching = null, trialsRun = 0, lastTop = null;
+let ovStart = 0, ovBudget = 0, ovTimer = null, ovHistory = [], ovLock = null;
+
 function workerSource() {
   // Arrow constants stringify without their name, so those two are re-declared explicitly.
   return `const LEARN = ${JSON.stringify(LEARN)};
+const GRID = ${JSON.stringify(GRID)};
 const rng32 = ${rng32.toString()};
 const clipz = ${clipz.toString()};
-`   + [softmax, predict, fit, buildModel, crossVal].map(f => f.toString()).join('\n') + `
+` + [softmax, predict, fit, buildModel, crossVal].map(f => f.toString()).join('\n') + `
 function sample(rnd, i) {
   const hidden = rnd() < 0.35 ? 0 : 4 + Math.floor(rnd() * 44);
   const lg = (lo, hi) => Math.exp(Math.log(lo) + rnd() * (Math.log(hi) - Math.log(lo)));
   return { hidden, epochs: Math.round(200 + rnd() * (hidden ? 2600 : 1800)),
            lr: lg(0.03, 0.4), l2: lg(1e-4, 3e-2), augment: Math.floor(rnd() * 7), seed: i * 7919 + 1 };
 }
+const fitTop = (examples, top) => top.map(t => buildModel(examples, t.opts));
 onmessage = e => {
-  const { examples, budgetMs, folds, repeats, topK } = e.data;
+  const d = e.data;
+  if (d.cmd === 'fit') { postMessage({ type: 'done', mode: d.mode, trials: d.trials || 0, elapsed: 0, top: d.top, models: fitTop(d.examples, d.top) }); return; }
+  const { examples, budgetMs, folds, repeats, topK, checkpointMs, mode } = d;
   const t0 = Date.now(), rnd = rng32((Date.now() ^ 0x9e3779b9) >>> 0);
-  let trials = 0, top = [], lastPost = 0;
+  let trials = 0, top = [], lastPost = 0, lastCk = Date.now();
   while (Date.now() - t0 < budgetMs) {
-    const o = sample(rnd, trials); let sum = 0, n = 0;
+    const o = trials < GRID.length ? { ...GRID[trials], seed: trials * 7919 + 1 } : sample(rnd, trials);
+    let sum = 0, n = 0;
     for (let r = 0; r < repeats; r++) {
       let cv; try { cv = crossVal(examples, { ...o, seed: o.seed + r * 977 }, folds); } catch (err) { break; }
       if (cv.acc == null) break;
@@ -863,80 +848,108 @@ onmessage = e => {
       if (Date.now() - t0 >= budgetMs) break;
     }
     trials++;
-    if (n) {
-      top.push({ acc: sum / n, opts: o });
-      top.sort((a, b) => b.acc - a.acc || a.opts.epochs - b.opts.epochs);
-      top = top.slice(0, topK);
+    if (n) { top.push({ acc: sum / n, opts: o }); top.sort((a, b) => b.acc - a.acc || a.opts.epochs - b.opts.epochs); top = top.slice(0, topK); }
+    if (Date.now() - lastPost > 1500) { lastPost = Date.now(); postMessage({ type: 'progress', mode, trials, elapsed: Date.now() - t0, top }); }
+    if (checkpointMs && top.length && Date.now() - lastCk > checkpointMs) {
+      lastCk = Date.now();
+      postMessage({ type: 'checkpoint', mode, trials, elapsed: Date.now() - t0, top, models: fitTop(examples, top) });
     }
-    if (Date.now() - lastPost > 1500) { lastPost = Date.now(); postMessage({ type: 'progress', trials, elapsed: Date.now() - t0, top }); }
   }
-  postMessage({ type: 'done', trials, elapsed: Date.now() - t0, top });
+  postMessage({ type: 'done', mode, trials, elapsed: Date.now() - t0, top, models: top.length ? fitTop(examples, top) : [] });
 };`;
 }
-function ovFmt(ms) {
-  const s = Math.max(0, Math.round(ms / 1000)), h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60);
-  return h ? `${h}h ${String(m).padStart(2, '0')}m` : `${m}m ${String(s % 60).padStart(2, '0')}s`;
+function ensureWorker() {
+  if (trainWorker) return trainWorker;
+  trainWorker = new Worker(URL.createObjectURL(new Blob([workerSource()], { type: 'text/javascript' })));
+  trainWorker.onerror = ev => { console.error('training worker failed', ev); killWorker();
+    finishSearch(`<b style="color:var(--danger)">Training failed: ${ev.message || 'worker error'}</b>`); };
+  trainWorker.onmessage = ev => onWorkerMessage(ev.data);
+  return trainWorker;
 }
-function ovRenderSpark() {
-  $('#ov-spark').innerHTML = ovHistory.slice(-40).map(v => `<i style="height:${Math.max(6, v * 100)}%"></i>`).join('');
-}
-function ovAdopt(top, { final } = {}) {
-  if (!top || !top.length) return null;
-  const members = top.map(t => buildModel(trainSet, t.opts));
-  model = members.length > 1
-    ? { type: 'ensemble', labels: members[0].labels, members, hidden: 0, n: trainSet.length,
-        acc: top[0].acc, opts: top[0].opts, trainedAt: Date.now() }
-    : { ...members[0], acc: top[0].acc };
-  model.n = trainSet.length;
+function killWorker() { if (trainWorker) { trainWorker.terminate(); trainWorker = null; } }
+
+function adoptModels(models, top) {
+  if (!models?.length) return null;
+  model = models.length > 1
+    ? { type: 'ensemble', labels: models[0].labels, members: models, hidden: 0, n: trainSet.length,
+        acc: top[0].acc, trainedAt: Date.now() }
+    : { ...models[0], acc: top[0].acc, n: trainSet.length };
   model.perClass = Object.fromEntries(LEARN.labels.map(l => [l, trainSet.filter(e => e.y === l).length]).filter(([, n]) => n));
   try { ls.set('model:v2', JSON.stringify(model)); } catch (e) { console.warn('model too large to store', e); }
   for (const r of ROOMS) for (const st of r.tracks.values()) st.learnedGates = {};
   renderTrainCounts();
   return model;
 }
-function ovStop(msg) {
-  if (ovWorker) { ovWorker.terminate(); ovWorker = null; }
-  clearInterval(ovTimer); ovTimer = null;
-  ovLock?.release?.().catch(() => {}); ovLock = null;
-  $('#overnight-btn').hidden = false; $('#overnight-stop').hidden = true;
-  $('#ov-state').textContent = 'finished'; $('#ov-state').className = 'pill ok dot';
-  document.querySelector('#overnight-panel .bar')?.classList.remove('run');
-  if (msg) $('#train-result').innerHTML = msg;
+const ovFmt = ms => { const s = Math.max(0, Math.round(ms / 1000)), h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60);
+  return h ? `${h}h ${String(m).padStart(2, '0')}m` : `${m}m ${String(s % 60).padStart(2, '0')}s`; };
+function ovRenderSpark() { $('#ov-spark').innerHTML = ovHistory.slice(-40).map(v => `<i style="height:${Math.max(6, v * 100)}%"></i>`).join(''); }
+
+function onWorkerMessage(d) {
+  if (!searching) return;
+  trialsRun = d.trials; $('#st-trials').textContent = d.trials;
+  if (d.top?.length) {
+    lastTop = d.top;
+    const b = d.top[0];
+    ovHistory.push(b.acc); if (ovHistory.length > 200) ovHistory.shift();
+    if (searching.mode === 'overnight') {
+      ovRenderSpark();
+      $('#ov-detail').textContent = `${d.trials} configurations tried · best ${(b.acc * 100).toFixed(1)}% (${b.opts.hidden ? b.opts.hidden + ' hidden units' : 'linear'}, ${b.opts.epochs} epochs)`;
+    } else if (d.type === 'progress') {
+      $('#train-result').innerHTML = `<b>Searching…</b> ${d.trials} configurations tried · best <b>${(b.acc * 100).toFixed(0)}%</b>`;
+    }
+  }
+  if (d.type === 'checkpoint') { adoptModels(d.models, d.top); return; }
+  if (d.type !== 'done') return;
+  const m = adoptModels(d.models, d.top);
+  const mode = searching.mode, secs = ((d.elapsed || (Date.now() - searching.start)) / 1000);
+  if (!m) { finishSearch(`<b style="color:var(--warn)">Nothing could be scored yet.</b> Record more examples.`); return; }
+  const shape = model.type === 'ensemble' ? `an ensemble of the best ${model.members.length}` : (d.top[0].opts.hidden ? `a ${d.top[0].opts.hidden}-unit network` : 'a linear model');
+  const acc = (d.top[0].acc * 100).toFixed(mode === 'overnight' ? 1 : 0);
+  const stopped = searching.stoppedAfter;
+  finishSearch(mode === 'overnight'
+    ? (stopped
+        ? `<b>Overnight training stopped</b> after ${ovFmt(stopped)} and ${searching.stoppedTrials} configurations. Kept ${shape}, cross-validated accuracy <b>${acc}%</b>. Running now and saved in this browser.`
+        : `<b style="color:var(--ok)">Overnight training finished.</b> ${d.trials} configurations over ${ovFmt(d.elapsed)}. Kept ${shape}, cross-validated accuracy <b>${acc}%</b> on ${trainSet.length} examples. Running now and saved in this browser.`)
+    : `<b style="color:var(--ok)">${mode === 'auto' || mode === 'idle' ? 'Auto-trained' : 'Trained'}</b> on ${trainSet.length} examples: ${d.trials} configurations in ${secs.toFixed(0)} s, kept ${shape}, cross-validated accuracy <b>${acc}%</b>.`);
 }
-async function ovStartRun() {
-  if (ovWorker) return;
+function startSearch(mode, budgetMs, checkpointMs) {
+  if (searching) return false;
   const byLabel = Object.fromEntries(LEARN.labels.map(l => [l, trainSet.filter(e => e.y === l).length]));
   if (!byLabel.normal || !LEARN.labels.some(l => l !== 'normal' && byLabel[l])) {
-    return toast('Record "normal" and at least one behavior before training.', true);
+    if (mode !== 'idle') $('#train-result').innerHTML = `<b style="color:var(--warn)">Not trained yet.</b> Need examples of <b>normal</b> and at least one behavior. So far: ${LEARN.labels.filter(l => byLabel[l]).map(l => `${nice(l)} ${byLabel[l]}`).join(', ') || 'none'}.`;
+    return false;
   }
+  searching = { mode, start: Date.now(), budget: budgetMs }; lastTop = null; ovHistory = [];
+  $('#train-btn').disabled = $('#train-more').disabled = true;
+  ensureWorker().postMessage({ cmd: 'search', examples: trainSet, budgetMs, checkpointMs: checkpointMs || 0,
+                               folds: SEARCH.folds, repeats: SEARCH.repeats, topK: SEARCH.topK, mode });
+  return true;
+}
+function finishSearch(msg) {
+  const wasOvernight = searching?.mode === 'overnight';
+  searching = null;
+  $('#train-btn').disabled = $('#train-more').disabled = false;
+  if (msg) $('#train-result').innerHTML = msg;
+  if (wasOvernight) {
+    clearInterval(ovTimer); ovTimer = null;
+    ovLock?.release?.().catch(() => {}); ovLock = null;
+    $('#overnight-btn').hidden = false; $('#overnight-stop').hidden = true;
+    $('#ov-state').textContent = 'finished'; $('#ov-state').className = 'pill ok dot';
+    document.querySelector('#overnight-panel .bar')?.classList.remove('run');
+  }
+  renderTrainCounts();
+}
+async function ovStartRun() {
   const hours = +$('#overnight-hours').value;
   ovBudget = hours ? hours * 3600e3 : 30 * 24 * 3600e3;      // "until I stop it" = effectively unbounded
-  ovStart = Date.now(); ovLastSave = Date.now(); ovHistory = []; ovTop = null;   // let the first ensemble form before saving
+  ovStart = Date.now();
+  if (!startSearch('overnight', ovBudget, SEARCH.checkpointMs)) return;
   try { ovLock = await navigator.wakeLock?.request('screen'); } catch {}
-  ovWorker = new Worker(URL.createObjectURL(new Blob([workerSource()], { type: 'text/javascript' })));
-  ovWorker.onerror = e => { console.error(e); ovStop(`<b style="color:var(--new)">Overnight training failed: ${e.message}</b>`); };
-  ovWorker.onmessage = e => {
-    const d = e.data;
-    trialsRun = d.trials;
-    $('#st-trials').textContent = d.trials;
-    if (d.top?.length) {
-      ovTop = d.top;
-      ovHistory.push(d.top[0].acc); if (ovHistory.length > 200) ovHistory.shift(); ovRenderSpark();
-      const best = d.top[0];
-      $('#ov-detail').textContent = `${d.trials} configurations tried · best ${(best.acc * 100).toFixed(1)}% (${best.opts.hidden ? best.opts.hidden + ' hidden units' : 'linear'}, ${best.opts.epochs} epochs)`;
-      if (d.type === 'done' || Date.now() - ovLastSave > OV.saveEveryMs) { ovLastSave = Date.now(); ovAdopt(d.top); }
-    }
-    if (d.type === 'done') {
-      const m = ovAdopt(d.top, { final: true });
-      ovStop(`<b style="color:var(--ok)">Overnight training finished.</b> ${d.trials} configurations tried over ${ovFmt(d.elapsed)}. Kept the best ${d.top.length} as an ensemble, cross-validated accuracy <b>${(d.top[0].acc * 100).toFixed(1)}%</b> on ${trainSet.length} examples. Running now and saved in this browser.`);
-      renderTrainCounts();
-    }
-  };
-  ovWorker.postMessage({ examples: trainSet, budgetMs: ovBudget, folds: OV.folds, repeats: OV.repeats, topK: OV.topK });
   $('#overnight-panel').hidden = false; $('#overnight-btn').hidden = true; $('#overnight-stop').hidden = false;
-  $('#ov-state').textContent = 'running'; $('#ov-state').className = 'pill accent dot live';
+  $('#ov-state').className = 'pill accent dot live';
   document.querySelector('#overnight-panel .bar').classList.add('run');
-  $('#train-result').innerHTML = `<b>Deep search running in the background.</b> Detection keeps working; you can leave this tab open overnight. Closing it stops the search, but the best model found so far is already saved.`;
+  $('#ov-spark').innerHTML = ''; $('#ov-detail').textContent = 'starting…';
+  $('#train-result').innerHTML = `<b>Deep search running in a background thread.</b> Detection keeps working and the page stays responsive. The best model so far is saved every couple of minutes, so stopping early keeps the work.`;
   ovTimer = setInterval(() => {
     const el = Date.now() - ovStart;
     $('#ov-bar').style.width = (hours ? Math.min(100, el / ovBudget * 100) : (el / 60000 % 100)) + '%';
@@ -945,17 +958,20 @@ async function ovStartRun() {
 }
 $('#overnight-btn').onclick = ovStartRun;
 $('#overnight-stop').onclick = () => {
-  const el = Date.now() - ovStart, top = ovTop;
-  ovStop();                                   // terminate first, then keep whatever it had found
+  const el = Date.now() - ovStart, top = lastTop, trials = trialsRun;
+  // A worker in a tight loop cannot read messages, so stopping means terminating it. The best
+  // configurations found are then refitted by a fresh worker, never on this thread.
+  killWorker();
   if (top?.length) {
-    ovAdopt(top, { final: true });
-    $('#train-result').innerHTML = `<b>Overnight training stopped</b> after ${ovFmt(el)} and ${trialsRun} configurations. Kept the best ${top.length} as an ensemble, cross-validated accuracy <b>${(top[0].acc * 100).toFixed(1)}%</b>. Running now and saved in this browser.`;
+    searching = { mode: 'overnight', start: ovStart, stoppedAfter: el, stoppedTrials: trials };
+    $('#ov-state').textContent = 'saving best model…';
+    ensureWorker().postMessage({ cmd: 'fit', mode: 'overnight', examples: trainSet, top, trials });
   } else {
-    $('#train-result').innerHTML = `<b>Overnight training stopped</b> after ${ovFmt(el)}, before any model had been scored.`;
+    searching = { mode: 'overnight' };
+    finishSearch(`<b>Overnight training stopped</b> after ${ovFmt(el)}, before any model had been scored.`);
   }
-  renderTrainCounts();
 };
-addEventListener('beforeunload', e => { if (ovWorker) { e.preventDefault(); e.returnValue = ''; } });
+addEventListener('beforeunload', e => { if (searching?.mode === 'overnight') { e.preventDefault(); e.returnValue = ''; } });
 
 function recordWindows(room, ts) {
   if (!rec) return;
@@ -966,39 +982,22 @@ function recordWindows(room, ts) {
       $('#rec-status').textContent = 'nothing stored';
       $('#train-result').innerHTML = `<b style="color:var(--new)">Recording stored 0 windows.</b> Diagnostics: ${tr.length} track(s), longest ${longest} frames over ${oldest.toFixed(1)} s, ${room.fpsWin.length > 1 ? ((room.fpsWin.length - 1) / (ts - room.fpsWin[0])).toFixed(1) : '?'} fps. ` + (tr.length === 0 ? 'No person was detected.' : longest < LEARN.minObs ? 'The person id kept changing, so no track lasted long enough.' : 'Detection was too slow.');
       return; }
+    saveTrain();                       // one write per recording, not one per window
     $('#rec-status').textContent = `stored ${done.n} windows of "${nice(done.label)}"`;
     autoTrain();
     return;
   }
   if (ts - rec.last < LEARN.stepS) return;
   for (const st of room.tracks.values()) { if (ts - st.lastSeen > 0.5) continue; const x = windowFeatures(st, ts); if (x) { trainSet.push({ x: x.map(v => Math.round(v * 1e4) / 1e4), y: rec.label, room: room.kind, t: Date.now() }); rec.n++; } }
-  rec.last = ts; $('#rec-status').textContent = `recording ${rec.label}… ${(rec.until - ts).toFixed(0)} s · ${rec.n} windows`; saveTrain();
+  rec.last = ts; $('#rec-status').textContent = `recording ${rec.label}… ${(rec.until - ts).toFixed(0)} s · ${rec.n} windows`;
 }
-async function runTraining(auto, rounds = 1) {
-  if (searching) return;
-  const byLabel = Object.fromEntries(LEARN.labels.map(l => [l, trainSet.filter(e => e.y === l).length]));
-  if (!byLabel.normal || !LEARN.labels.some(l => l !== 'normal' && byLabel[l])) {
-    $('#train-result').innerHTML = `<b style="color:var(--ack)">Not trained yet.</b> Need examples of <b>normal</b> and at least one behavior. So far: ${LEARN.labels.filter(l => byLabel[l]).map(l => `${nice(l)} ${byLabel[l]}`).join(', ') || 'none'}.`;
-    return;
-  }
-  searching = true; $('#train-btn').disabled = $('#train-more').disabled = true;
-  const t0 = performance.now();
-  try {
-    const r = await trainBest(rounds, msg => { $('#train-result').innerHTML = `<b>Searching…</b> ${msg}` + (searchBest ? ` · best so far <b>${(searchBest.acc * 100).toFixed(0)}%</b>` : ''); });
-    if (r.error) { $('#train-result').innerHTML = `<b style="color:var(--ack)">${r.error}</b>`; return; }
-    const confTxt = Object.entries(r.conf).map(([y, row]) => `${nice(y)} → ${Object.entries(row).map(([p, n]) => `${nice(p)} ${n}`).join(', ')}`).join(' · ');
-    const shape = r.opts.hidden ? `${r.opts.hidden}-unit network` : 'linear model';
-    $('#train-result').innerHTML = `<b style="color:var(--ok)">${auto ? 'Auto-trained' : 'Trained'}</b> on ${trainSet.length} examples in ${((performance.now() - t0) / 1000).toFixed(1)} s over ${r.rounds} search round(s). Best of ${GRID.length * r.rounds} configurations: <b>${shape}</b>, cross-validated accuracy <b>${(r.acc * 100).toFixed(0)}%</b> on ${r.tested} held-out examples (${confTxt}). Saved in this browser and running now.`;
-    renderTrainCounts();
-    for (const room of ROOMS) for (const st of room.tracks.values()) st.learnedGates = {};
-  } catch (e) { console.error(e); $('#train-result').innerHTML = `<b style="color:var(--new)">Training failed: ${e.message}</b>`; }
-  finally { searching = false; $('#train-btn').disabled = $('#train-more').disabled = false; }
-}
-function autoTrain() { runTraining(true, 1); }
-// "Keep searching" runs more rounds with fresh seeds for as long as it is ticked, keeping the
-// best model found so far. This is the only kind of "train it longer" that helps: it explores
-// more model shapes against your own recordings.
-setInterval(() => { if ($('#keep-searching')?.checked && !searching && trainSet.length) runTraining(true, 1); }, 3000);
+function autoTrain() { startSearch('auto', BUDGET.auto); }
+$('#train-btn').onclick = () => startSearch('train', BUDGET.train);
+$('#train-more').onclick = () => startSearch('harder', BUDGET.harder);
+// "Keep searching" runs more short searches whenever nothing else is training. It never
+// competes with an overnight run, and it never touches the page thread.
+setInterval(() => { if ($('#keep-searching')?.checked && !searching && trainSet.length) startSearch('idle', BUDGET.idle); }, 5000);
+
 function renderTrainCounts() {
   const counts = LEARN.labels.map(l => [l, trainSet.filter(e => e.y === l).length]);
   $('#train-counts').innerHTML = counts.map(([l, n]) => `${nice(l)} <b>${n}</b>`).join(' · ');
@@ -1017,8 +1016,6 @@ $('#rec-btn').onclick = () => {
   const label = $('#rec-label').value; let count = 3; $('#rec-status').textContent = `get ready: ${label} in 3…`;
   const iv = setInterval(() => { count--; if (count > 0) $('#rec-status').textContent = `get ready: ${label} in ${count}…`; else { clearInterval(iv); rec = { label, until: now() + 6, last: 0, n: 0 }; $('#rec-status').textContent = `recording ${label}…`; } }, 1000);
 };
-$('#train-btn').onclick = () => runTraining(false, 1);
-$('#train-more').onclick = () => runTraining(false, 6);   // a longer search, still seconds not hours
 $('#export-btn').onclick = () => {
   const blob = new Blob([JSON.stringify({ version: 2, features: FEAT_NAMES, window_s: LEARN.windowS, labels: LEARN.labels, examples: trainSet, model }, null, 0)], { type: 'application/json' });
   const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: `classroom-training-${new Date().toISOString().slice(0, 10)}.json` }); a.click();
