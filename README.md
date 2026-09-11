@@ -113,6 +113,11 @@ Two layers run side by side and feed the same alert keys (so they merge, never d
   one-hidden-layer tanh network. Which shape is used is decided by stratified k-fold
   cross-validation over a grid of shapes, strengths and augmentation levels, not by hand. The
   model's prediction also sits behind a sustained gate, so a single confident frame never alerts.
+  Every candidate is scored on identical folds, the best configuration so far is carried across
+  searches and re-scored on the current data, and the finalists are re-run head to head with
+  more repeats before one is kept. Without that the reported accuracy is mostly sampling noise
+  and wanders up and down between runs. The panel shows per-behavior accuracy, so a ceiling
+  points at which behavior needs more recordings rather than being a mystery.
 
 Training happens where the data is. The demo records labelled 2-second windows from your own
 camera (pose numbers only, never video), searches after every recording, and reports a

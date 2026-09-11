@@ -162,6 +162,11 @@
   .bar.run > i{background-image:linear-gradient(90deg,var(--accent),#8b5cf6,var(--accent));background-size:200% 100%;
     animation:slide 2s linear infinite}
   @keyframes slide{to{background-position:-200% 0}}
+  .cls{display:flex;align-items:center;gap:10px;padding:5px 14px;font-size:12px}
+  .cls .n{width:92px;color:var(--dim);text-transform:capitalize;flex:none}
+  .cls .bar{flex:none;width:150px}
+  .cls .p{width:38px;text-align:right;font-variant-numeric:tabular-nums;color:var(--fg);flex:none}
+  .cls-head{padding:9px 14px 3px;font-size:10px;text-transform:uppercase;letter-spacing:.07em;color:var(--mute);border-top:1px solid var(--line-soft)}
   .result{padding:11px 14px;font-size:12px;line-height:1.6;color:var(--dim);border-top:1px solid var(--line-soft)}
   .result b{color:var(--fg)}
   .spark{display:flex;align-items:flex-end;gap:2px;height:26px}
@@ -252,6 +257,7 @@
       <div class="card-head">
         <h2>Teach the classifier</h2>
         <span class="pill" id="modelbadge">rules only</span>
+        <span class="muted" id="saved-at"></span>
         <div class="grow"></div>
         <label class="switch"><input type="checkbox" id="uselearned" checked><i></i>Use learned model</label>
       </div>
@@ -298,6 +304,7 @@
         </div>
         <div class="bar run"><i id="ov-bar"></i></div>
       </div>
+      <div id="class-breakdown" hidden></div>
       <div class="result" id="train-counts"></div>
       <div class="result" id="train-result" style="border-top:0;padding-top:0"></div>
     </section>
@@ -424,7 +431,9 @@ const RETENTION = { unreviewed_h: 48, dismissed_h: 24, actionable_d: 90 };
 const TRACK_TTL = 5, MIN_TRACK_AGE = 3, MIN_TRACK_AGE_S = 5;   // a track must also have existed this long before it can alert
 const $ = s => document.querySelector(s);
 const staff = () => $('#staff').value.trim();
-const ls = { get: k => { try { return localStorage.getItem(k); } catch { return null; } }, set: (k, v) => { try { localStorage.setItem(k, v); } catch {} } };
+const ls = { get: k => { try { return localStorage.getItem(k); } catch { return null; } },
+             set: (k, v) => { try { localStorage.setItem(k, v); } catch {} },
+             setRaw: (k, v) => localStorage.setItem(k, v) };   // throws, so a failed save is visible
 $('#staff').value = ls.get('staff') || '';
 $('#staff').addEventListener('input', e => ls.set('staff', e.target.value));
 const nice = b => b.replace(/_/g, ' ');
@@ -781,14 +790,16 @@ function buildModel(examples, o = {}) {
   return { ...fit(X, Y, labels.length, D, o), labels, mu, sd, n: examples.length,
            hidden: o.hidden || 0, opts: { hidden: o.hidden || 0, epochs: o.epochs, lr: o.lr, l2: o.l2, augment: o.augment }, trainedAt: Date.now() };
 }
-// Stratified k-fold: every example is used for testing exactly once, so the score is not a
-// lucky split. With very few examples per class it falls back to leave-one-out.
-function crossVal(examples, o, k = 5) {
+// Stratified k-fold. The split depends only on the data and the repeat number, never on the
+// configuration being scored, so every candidate is judged on identical folds. Scoring each
+// one on its own random split made the comparison mostly noise: the reported best jumped
+// around between runs instead of improving.
+function crossVal(examples, o, k = 5, foldSeed = 1) {
   const labels = LEARN.labels.filter(l => examples.some(e => e.y === l));
-  const rnd = rng32((o.seed || 1) * 104729);
+  const rnd = rng32(foldSeed * 104729 + examples.length);
   const folds = Array.from({ length: k }, () => []);
   for (const l of labels) {
-    const ex = examples.filter(e => e.y === l).sort(() => rnd() - 0.5);
+    const ex = examples.filter(e => e.y === l).map(e => [rnd(), e]).sort((a, b) => a[0] - b[0]).map(p => p[1]);
     ex.forEach((e, i) => folds[i % k].push(e));
   }
   let ok = 0, tot = 0; const conf = {};
@@ -800,6 +811,7 @@ function crossVal(examples, o, k = 5) {
   }
   return { acc: tot ? ok / tot : null, tested: tot, conf };
 }
+
 // =====================================================================================
 // All model fitting happens in a Web Worker, never on the page thread. One fit takes
 // seconds; doing that here froze the tab, which the browser reports as an unresponsive page
@@ -807,6 +819,8 @@ function crossVal(examples, o, k = 5) {
 // cross-validation, fits the best few on everything and posts the finished weights back.
 // =====================================================================================
 const SEARCH = { folds: 5, repeats: 3, topK: 5, checkpointMs: 120000 };
+let champion = null;   // the best configuration found so far, carried across every search
+try { champion = JSON.parse(ls.get('champion:v1') || 'null'); } catch {}
 const BUDGET = { auto: 8000, train: 20000, harder: 90000, idle: 20000 };
 const GRID = [
   { hidden: 0, epochs: 400, lr: 0.15, l2: 1e-3, augment: 0 },
@@ -815,7 +829,7 @@ const GRID = [
   { hidden: 16, epochs: 1200, lr: 0.15, l2: 3e-3, augment: 3 },
   { hidden: 24, epochs: 1600, lr: 0.10, l2: 1e-2, augment: 4 },
 ];
-let trainWorker = null, searching = null, trialsRun = 0, lastTop = null;
+let trainWorker = null, searching = null, trialsRun = 0, lastTop = null, trainDirty = false;
 let ovStart = 0, ovBudget = 0, ovTimer = null, ovHistory = [], ovLock = null;
 
 function workerSource() {
@@ -832,31 +846,56 @@ function sample(rnd, i) {
            lr: lg(0.03, 0.4), l2: lg(1e-4, 3e-2), augment: Math.floor(rnd() * 7), seed: i * 7919 + 1 };
 }
 const fitTop = (examples, top) => top.map(t => buildModel(examples, t.opts));
+const mergeConf = (a, b) => { for (const y in b) { a[y] ??= {}; for (const p in b[y]) a[y][p] = (a[y][p] || 0) + b[y][p]; } return a; };
+// Score one configuration on the same set of folds every time, and report the spread so the
+// page can show how certain the number is.
+function score(examples, o, folds, seeds) {
+  let sum = 0, sq = 0, n = 0, tested = 0; const conf = {};
+  for (const fs of seeds) {
+    let cv; try { cv = crossVal(examples, o, folds, fs); } catch (err) { break; }
+    if (cv.acc == null) break;
+    sum += cv.acc; sq += cv.acc * cv.acc; n++; tested += cv.tested; mergeConf(conf, cv.conf);
+  }
+  if (!n) return null;
+  const mean = sum / n;
+  return { acc: mean, sd: Math.sqrt(Math.max(0, sq / n - mean * mean)), tested, conf, opts: o };
+}
 onmessage = e => {
   const d = e.data;
   if (d.cmd === 'fit') { postMessage({ type: 'done', mode: d.mode, trials: d.trials || 0, elapsed: 0, top: d.top, models: fitTop(d.examples, d.top) }); return; }
-  const { examples, budgetMs, folds, repeats, topK, checkpointMs, mode } = d;
+  const { examples, budgetMs, folds, repeats, topK, checkpointMs, mode, finalRepeats, champions } = d;
   const t0 = Date.now(), rnd = rng32((Date.now() ^ 0x9e3779b9) >>> 0);
+  const searchSeeds = Array.from({ length: repeats }, (_, i) => i + 1);
   let trials = 0, top = [], lastPost = 0, lastCk = Date.now();
-  while (Date.now() - t0 < budgetMs) {
-    const o = trials < GRID.length ? { ...GRID[trials], seed: trials * 7919 + 1 } : sample(rnd, trials);
-    let sum = 0, n = 0;
-    for (let r = 0; r < repeats; r++) {
-      let cv; try { cv = crossVal(examples, { ...o, seed: o.seed + r * 977 }, folds); } catch (err) { break; }
-      if (cv.acc == null) break;
-      sum += cv.acc; n++;
-      if (Date.now() - t0 >= budgetMs) break;
-    }
+  // The previous winner is re-scored on the current data first, so its number stays comparable
+  // and a run can never report something worse than what is already saved.
+  const seeded = (champions || []).map(c => ({ ...c, seed: c.seed || 1 }));
+  while (Date.now() - t0 < budgetMs || trials < seeded.length) {
+    const o = trials < seeded.length ? seeded[trials]
+      : (trials - seeded.length) < GRID.length ? { ...GRID[trials - seeded.length], seed: trials * 7919 + 1 }
+      : sample(rnd, trials);
+    const r = score(examples, o, folds, searchSeeds);
     trials++;
-    if (n) { top.push({ acc: sum / n, opts: o }); top.sort((a, b) => b.acc - a.acc || a.opts.epochs - b.opts.epochs); top = top.slice(0, topK); }
-    if (Date.now() - lastPost > 1500) { lastPost = Date.now(); postMessage({ type: 'progress', mode, trials, elapsed: Date.now() - t0, top }); }
+    if (r) { top.push(r); top.sort((a, b) => b.acc - a.acc || a.opts.epochs - b.opts.epochs); top = top.slice(0, Math.max(topK, 6)); }
+    if (Date.now() - lastPost > 1500) { lastPost = Date.now(); postMessage({ type: 'progress', mode, trials, elapsed: Date.now() - t0, top: top.slice(0, topK) }); }
     if (checkpointMs && top.length && Date.now() - lastCk > checkpointMs) {
       lastCk = Date.now();
-      postMessage({ type: 'checkpoint', mode, trials, elapsed: Date.now() - t0, top, models: fitTop(examples, top) });
+      const ck = finalRound(examples, top, folds, finalRepeats, topK);
+      postMessage({ type: 'checkpoint', mode, trials, elapsed: Date.now() - t0, ...ck });
     }
   }
-  postMessage({ type: 'done', mode, trials, elapsed: Date.now() - t0, top, models: top.length ? fitTop(examples, top) : [] });
-};`;
+  const out = top.length ? finalRound(examples, top, folds, finalRepeats, topK) : { top: [], models: [] };
+  postMessage({ type: 'done', mode, trials, elapsed: Date.now() - t0, ...out });
+};
+// Head-to-head: re-score the finalists on a fresh, shared set of folds with more repeats, so
+// the winner is not just the configuration that got the luckiest split during the search.
+function finalRound(examples, top, folds, finalRepeats, topK) {
+  const seeds = Array.from({ length: finalRepeats }, (_, i) => 1001 + i);
+  const scored = top.map(t => score(examples, t.opts, folds, seeds)).filter(Boolean);
+  scored.sort((a, b) => b.acc - a.acc || a.opts.epochs - b.opts.epochs);
+  const best = scored.slice(0, topK);
+  return { top: best, models: fitTop(examples, best), conf: best[0]?.conf || {}, tested: best[0]?.tested || 0, sd: best[0]?.sd || 0 };
+}`;
 }
 function ensureWorker() {
   if (trainWorker) return trainWorker;
@@ -868,17 +907,53 @@ function ensureWorker() {
 }
 function killWorker() { if (trainWorker) { trainWorker.terminate(); trainWorker = null; } }
 
-function adoptModels(models, top) {
-  if (!models?.length) return null;
+let lastSaved = null;
+function saveModel() {
+  try {
+    ls.setRaw('model:v2', JSON.stringify(model));
+    ls.setRaw('champion:v1', JSON.stringify(champion));
+    lastSaved = Date.now();
+    return true;
+  } catch (e) {
+    console.warn('could not save model', e);
+    toast('Could not save the model: browser storage is full. Press Reset to clear old examples.', true);
+    return false;
+  }
+}
+function adoptModels(models, top, info = {}) {
+  if (!models?.length || !top?.length) return null;
+  const best = top[0];
+  // Never replace a saved model with a worse one. The champion is re-scored on the current
+  // data at the start of every search, so these numbers are always comparable.
+  if (champion && champion.n === trainSet.length && best.acc < champion.acc - 1e-9) return model;
   model = models.length > 1
-    ? { type: 'ensemble', labels: models[0].labels, members: models, hidden: 0, n: trainSet.length,
-        acc: top[0].acc, trainedAt: Date.now() }
-    : { ...models[0], acc: top[0].acc, n: trainSet.length };
+    ? { type: 'ensemble', labels: models[0].labels, members: models, hidden: 0, n: trainSet.length, trainedAt: Date.now() }
+    : { ...models[0], n: trainSet.length };
+  model.acc = best.acc;
+  model.sd = info.sd ?? best.sd ?? 0;
+  model.tested = info.tested ?? best.tested ?? 0;
+  model.conf = info.conf || best.conf || {};
   model.perClass = Object.fromEntries(LEARN.labels.map(l => [l, trainSet.filter(e => e.y === l).length]).filter(([, n]) => n));
-  try { ls.set('model:v2', JSON.stringify(model)); } catch (e) { console.warn('model too large to store', e); }
+  champion = { opts: best.opts, acc: best.acc, n: trainSet.length, at: Date.now() };
+  saveModel();
   for (const r of ROOMS) for (const st of r.tracks.values()) st.learnedGates = {};
   renderTrainCounts();
   return model;
+}
+function renderBreakdown() {
+  const el = $('#class-breakdown'), conf = model?.conf;
+  if (!conf || !Object.keys(conf).length) { el.hidden = true; return; }
+  el.hidden = false;
+  const rows = Object.entries(conf).map(([y, row]) => {
+    const tot = Object.values(row).reduce((a, b) => a + b, 0), right = row[y] || 0, pct = tot ? right / tot : 0;
+    const worst = Object.entries(row).filter(([p]) => p !== y).sort((a, b) => b[1] - a[1])[0];
+    const col = pct > 0.85 ? 'var(--ok)' : pct > 0.6 ? 'var(--warn)' : 'var(--danger)';
+    return `<div class="cls"><span class="n">${nice(y)}</span>
+      <div class="bar"><i style="width:${(pct * 100).toFixed(0)}%;background:${col}"></i></div>
+      <span class="p">${(pct * 100).toFixed(0)}%</span>
+      <span class="muted">${worst && worst[1] ? `${worst[1]} of ${tot} read as ${nice(worst[0])}` : `all ${tot} correct`}</span></div>`;
+  }).join('');
+  el.innerHTML = `<div class="cls-head">How often each behavior is recognised · ${model.tested} held-out predictions</div>${rows}`;
 }
 const ovFmt = ms => { const s = Math.max(0, Math.round(ms / 1000)), h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60);
   return h ? `${h}h ${String(m).padStart(2, '0')}m` : `${m}m ${String(s % 60).padStart(2, '0')}s`; };
@@ -898,19 +973,20 @@ function onWorkerMessage(d) {
       $('#train-result').innerHTML = `<b>Searching…</b> ${d.trials} configurations tried · best <b>${(b.acc * 100).toFixed(0)}%</b>`;
     }
   }
-  if (d.type === 'checkpoint') { adoptModels(d.models, d.top); return; }
+  if (d.type === 'checkpoint') { adoptModels(d.models, d.top, d); return; }
   if (d.type !== 'done') return;
-  const m = adoptModels(d.models, d.top);
+  const m = adoptModels(d.models, d.top, d);
   const mode = searching.mode, secs = ((d.elapsed || (Date.now() - searching.start)) / 1000);
   if (!m) { finishSearch(`<b style="color:var(--warn)">Nothing could be scored yet.</b> Record more examples.`); return; }
   const shape = model.type === 'ensemble' ? `an ensemble of the best ${model.members.length}` : (d.top[0].opts.hidden ? `a ${d.top[0].opts.hidden}-unit network` : 'a linear model');
-  const acc = (d.top[0].acc * 100).toFixed(mode === 'overnight' ? 1 : 0);
+  const acc = (model.acc * 100).toFixed(mode === 'overnight' ? 1 : 0);
+  const spread = model.sd > 0.005 ? ` ±${(model.sd * 100).toFixed(0)}` : '';
   const stopped = searching.stoppedAfter;
   finishSearch(mode === 'overnight'
     ? (stopped
-        ? `<b>Overnight training stopped</b> after ${ovFmt(stopped)} and ${searching.stoppedTrials} configurations. Kept ${shape}, cross-validated accuracy <b>${acc}%</b>. Running now and saved in this browser.`
-        : `<b style="color:var(--ok)">Overnight training finished.</b> ${d.trials} configurations over ${ovFmt(d.elapsed)}. Kept ${shape}, cross-validated accuracy <b>${acc}%</b> on ${trainSet.length} examples. Running now and saved in this browser.`)
-    : `<b style="color:var(--ok)">${mode === 'auto' || mode === 'idle' ? 'Auto-trained' : 'Trained'}</b> on ${trainSet.length} examples: ${d.trials} configurations in ${secs.toFixed(0)} s, kept ${shape}, cross-validated accuracy <b>${acc}%</b>.`);
+        ? `<b>Overnight training stopped</b> after ${ovFmt(stopped)} and ${searching.stoppedTrials} configurations. Kept ${shape}, cross-validated accuracy <b>${acc}%${spread}</b>. Running now and saved in this browser.`
+        : `<b style="color:var(--ok)">Overnight training finished.</b> ${d.trials} configurations over ${ovFmt(d.elapsed)}. Kept ${shape}, cross-validated accuracy <b>${acc}%${spread}</b> on ${trainSet.length} examples. Running now and saved in this browser.`)
+    : `<b style="color:var(--ok)">${mode === 'auto' || mode === 'idle' ? 'Auto-trained' : 'Trained'}</b> on ${trainSet.length} examples: ${d.trials} configurations in ${secs.toFixed(0)} s, kept ${shape}, cross-validated accuracy <b>${acc}%${spread}</b> over ${model.tested} held-out predictions.`);
 }
 function startSearch(mode, budgetMs, checkpointMs) {
   if (searching) return false;
@@ -919,10 +995,12 @@ function startSearch(mode, budgetMs, checkpointMs) {
     if (mode !== 'idle') $('#train-result').innerHTML = `<b style="color:var(--warn)">Not trained yet.</b> Need examples of <b>normal</b> and at least one behavior. So far: ${LEARN.labels.filter(l => byLabel[l]).map(l => `${nice(l)} ${byLabel[l]}`).join(', ') || 'none'}.`;
     return false;
   }
-  searching = { mode, start: Date.now(), budget: budgetMs }; lastTop = null; ovHistory = [];
+  searching = { mode, start: Date.now(), budget: budgetMs, n: trainSet.length }; lastTop = null; ovHistory = []; trainDirty = false;
   $('#train-btn').disabled = $('#train-more').disabled = true;
   ensureWorker().postMessage({ cmd: 'search', examples: trainSet, budgetMs, checkpointMs: checkpointMs || 0,
-                               folds: SEARCH.folds, repeats: SEARCH.repeats, topK: SEARCH.topK, mode });
+                               folds: SEARCH.folds, repeats: SEARCH.repeats, topK: SEARCH.topK, mode,
+                               finalRepeats: mode === 'overnight' ? 10 : 4,
+                               champions: champion ? [champion.opts] : [] });
   return true;
 }
 function finishSearch(msg) {
@@ -930,6 +1008,7 @@ function finishSearch(msg) {
   searching = null;
   $('#train-btn').disabled = $('#train-more').disabled = false;
   if (msg) $('#train-result').innerHTML = msg;
+  if (trainDirty && !wasOvernight) setTimeout(() => startSearch('auto', BUDGET.auto), 50);
   if (wasOvernight) {
     clearInterval(ovTimer); ovTimer = null;
     ovLock?.release?.().catch(() => {}); ovLock = null;
@@ -991,7 +1070,14 @@ function recordWindows(room, ts) {
   for (const st of room.tracks.values()) { if (ts - st.lastSeen > 0.5) continue; const x = windowFeatures(st, ts); if (x) { trainSet.push({ x: x.map(v => Math.round(v * 1e4) / 1e4), y: rec.label, room: room.kind, t: Date.now() }); rec.n++; } }
   rec.last = ts; $('#rec-status').textContent = `recording ${rec.label}… ${(rec.until - ts).toFixed(0)} s · ${rec.n} windows`;
 }
-function autoTrain() { startSearch('auto', BUDGET.auto); }
+// New examples always get trained on. If a search is already running, the retrain is queued
+// rather than dropped, which is why a recording sometimes appeared to do nothing.
+function autoTrain() {
+  trainDirty = true;
+  if (!startSearch('auto', BUDGET.auto) && searching) {
+    $('#train-result').innerHTML = `<b>Queued.</b> Training on the new examples starts when the current ${searching.mode === 'overnight' ? 'overnight run' : 'search'} finishes.`;
+  }
+}
 $('#train-btn').onclick = () => startSearch('train', BUDGET.train);
 $('#train-more').onclick = () => startSearch('harder', BUDGET.harder);
 // "Keep searching" runs more short searches whenever nothing else is training. It never
@@ -1002,7 +1088,8 @@ function renderTrainCounts() {
   const counts = LEARN.labels.map(l => [l, trainSet.filter(e => e.y === l).length]);
   $('#train-counts').innerHTML = counts.map(([l, n]) => `${nice(l)} <b>${n}</b>`).join(' · ');
   $('#st-examples').textContent = trainSet.length;
-  $('#st-acc').innerHTML = model && model.acc != null ? `${(model.acc * 100).toFixed(0)}% <small>cross-validated</small>` : '—';
+  $('#st-acc').innerHTML = model && model.acc != null
+    ? `${(model.acc * 100).toFixed(0)}% <small>${model.sd > 0.005 ? '±' + (model.sd * 100).toFixed(0) + ' · ' : ''}cross-validated</small>` : '—';
   $('#st-shape').innerHTML = model ? (model.type === 'ensemble' ? `${model.members.length} <small>model ensemble</small>`
     : model.hidden ? `${model.hidden} <small>hidden units</small>` : 'Linear') : '—';
   $('#st-trials').textContent = trialsRun;
@@ -1010,6 +1097,9 @@ function renderTrainCounts() {
     ? `${model.type === 'ensemble' ? 'ensemble' : model.hidden ? model.hidden + '-unit net' : 'linear'} · ${model.n} examples${model.acc != null ? ` · ${(model.acc * 100).toFixed(0)}%` : ''}`
     : 'rules only';
   $('#modelbadge').className = 'pill ' + (model ? 'ok' : '');
+  $('#saved-at').textContent = lastSaved ? `saved ${new Date(lastSaved).toLocaleTimeString()}`
+    : model ? 'restored from this browser' : '';
+  renderBreakdown();
 }
 $('#rec-btn').onclick = () => {
   if (!ROOMS.some(r => r.tracks.size)) return toast('Add a camera and make sure a person is detected first.', true);
