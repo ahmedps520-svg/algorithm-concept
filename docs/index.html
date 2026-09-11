@@ -284,6 +284,7 @@
       <div class="toolbar">
         <button id="train-btn" class="btn">Train</button>
         <button id="train-more" class="btn" title="Search many more model shapes and settings, keeping the best">Train harder</button>
+        <button id="train-stop" class="btn danger" hidden title="Stop training now and keep the best model found">Stop training</button>
         <span style="width:1px;height:22px;background:var(--line)"></span>
         <select id="overnight-hours" title="How long the deep search should run">
           <option value="1">1 hour</option><option value="4">4 hours</option>
@@ -818,7 +819,7 @@ function crossVal(examples, o, k = 5, foldSeed = 1) {
 // and eventually kills. The worker searches model shapes, scores each by repeated stratified
 // cross-validation, fits the best few on everything and posts the finished weights back.
 // =====================================================================================
-const SEARCH = { folds: 5, repeats: 3, topK: 5, checkpointMs: 120000 };
+const SEARCH = { folds: 5, repeats: 3, topK: 5, checkpointMs: 45000 };
 let champion = null;   // the best configuration found so far, carried across every search
 try { champion = JSON.parse(ls.get('champion:v1') || 'null'); } catch {}
 const BUDGET = { auto: 8000, train: 20000, harder: 90000, idle: 20000 };
@@ -829,7 +830,7 @@ const GRID = [
   { hidden: 16, epochs: 1200, lr: 0.15, l2: 3e-3, augment: 3 },
   { hidden: 24, epochs: 1600, lr: 0.10, l2: 1e-2, augment: 4 },
 ];
-let trainWorker = null, searching = null, trialsRun = 0, lastTop = null, trainDirty = false;
+let trainWorker = null, searching = null, trialsRun = 0, lastTop = null, lastModels = null, trainDirty = false;
 let ovStart = 0, ovBudget = 0, ovTimer = null, ovHistory = [], ovLock = null;
 
 function workerSource() {
@@ -973,7 +974,7 @@ function onWorkerMessage(d) {
       $('#train-result').innerHTML = `<b>Searching…</b> ${d.trials} configurations tried · best <b>${(b.acc * 100).toFixed(0)}%</b>`;
     }
   }
-  if (d.type === 'checkpoint') { adoptModels(d.models, d.top, d); return; }
+  if (d.type === 'checkpoint') { lastModels = d.models; adoptModels(d.models, d.top, d); return; }
   if (d.type !== 'done') return;
   const m = adoptModels(d.models, d.top, d);
   const mode = searching.mode, secs = ((d.elapsed || (Date.now() - searching.start)) / 1000);
@@ -982,11 +983,12 @@ function onWorkerMessage(d) {
   const acc = (model.acc * 100).toFixed(mode === 'overnight' ? 1 : 0);
   const spread = model.sd > 0.005 ? ` ±${(model.sd * 100).toFixed(0)}` : '';
   const stopped = searching.stoppedAfter;
-  finishSearch(mode === 'overnight'
-    ? (stopped
-        ? `<b>Overnight training stopped</b> after ${ovFmt(stopped)} and ${searching.stoppedTrials} configurations. Kept ${shape}, cross-validated accuracy <b>${acc}%${spread}</b>. Running now and saved in this browser.`
-        : `<b style="color:var(--ok)">Overnight training finished.</b> ${d.trials} configurations over ${ovFmt(d.elapsed)}. Kept ${shape}, cross-validated accuracy <b>${acc}%${spread}</b> on ${trainSet.length} examples. Running now and saved in this browser.`)
-    : `<b style="color:var(--ok)">${mode === 'auto' || mode === 'idle' ? 'Auto-trained' : 'Trained'}</b> on ${trainSet.length} examples: ${d.trials} configurations in ${secs.toFixed(0)} s, kept ${shape}, cross-validated accuracy <b>${acc}%${spread}</b> over ${model.tested} held-out predictions.`);
+  const n = k => `${k} configuration${k === 1 ? '' : 's'}`;
+  finishSearch(stopped
+    ? `<b>${mode === 'overnight' ? 'Overnight training' : 'Training'} stopped</b> after ${ovFmt(stopped)} and ${n(searching.stoppedTrials ?? d.trials)}. Kept ${shape}, cross-validated accuracy <b>${acc}%${spread}</b>. Saved in this browser.`
+    : mode === 'overnight'
+      ? `<b style="color:var(--ok)">Overnight training finished.</b> ${n(d.trials)} over ${ovFmt(d.elapsed)}. Kept ${shape}, cross-validated accuracy <b>${acc}%${spread}</b> on ${trainSet.length} examples. Running now and saved in this browser.`
+      : `<b style="color:var(--ok)">${mode === 'auto' || mode === 'idle' ? 'Auto-trained' : 'Trained'}</b> on ${trainSet.length} examples: ${n(d.trials)} in ${secs.toFixed(0)} s, kept ${shape}, cross-validated accuracy <b>${acc}%${spread}</b> over ${model.tested} held-out predictions.`);
 }
 function startSearch(mode, budgetMs, checkpointMs) {
   if (searching) return false;
@@ -995,7 +997,8 @@ function startSearch(mode, budgetMs, checkpointMs) {
     if (mode !== 'idle') $('#train-result').innerHTML = `<b style="color:var(--warn)">Not trained yet.</b> Need examples of <b>normal</b> and at least one behavior. So far: ${LEARN.labels.filter(l => byLabel[l]).map(l => `${nice(l)} ${byLabel[l]}`).join(', ') || 'none'}.`;
     return false;
   }
-  searching = { mode, start: Date.now(), budget: budgetMs, n: trainSet.length }; lastTop = null; ovHistory = []; trainDirty = false;
+  searching = { mode, start: Date.now(), budget: budgetMs, n: trainSet.length }; lastTop = null; lastModels = null; ovHistory = []; trainDirty = false;
+  $('#train-stop').hidden = false;
   $('#train-btn').disabled = $('#train-more').disabled = true;
   ensureWorker().postMessage({ cmd: 'search', examples: trainSet, budgetMs, checkpointMs: checkpointMs || 0,
                                folds: SEARCH.folds, repeats: SEARCH.repeats, topK: SEARCH.topK, mode,
@@ -1007,6 +1010,7 @@ function finishSearch(msg) {
   const wasOvernight = searching?.mode === 'overnight';
   searching = null;
   $('#train-btn').disabled = $('#train-more').disabled = false;
+  $('#train-stop').hidden = true;
   if (msg) $('#train-result').innerHTML = msg;
   if (trainDirty && !wasOvernight) setTimeout(() => startSearch('auto', BUDGET.auto), 50);
   if (wasOvernight) {
@@ -1036,21 +1040,38 @@ async function ovStartRun() {
   }, 1000);
 }
 $('#overnight-btn').onclick = ovStartRun;
-$('#overnight-stop').onclick = () => {
-  const el = Date.now() - ovStart, top = lastTop, trials = trialsRun;
-  // A worker in a tight loop cannot read messages, so stopping means terminating it. The best
-  // configurations found are then refitted by a fresh worker, never on this thread.
+// Stop means stop. It cancels whatever is running, switches off anything that would restart
+// it, and keeps the best model already found. A worker in a tight loop cannot read messages,
+// so stopping means terminating it.
+function stopTraining() {
+  if (!searching) return;
+  const mode = searching.mode, el = Date.now() - (searching.start || Date.now());
+  const top = lastTop, models = lastModels, trials = trialsRun;
   killWorker();
-  if (top?.length) {
-    searching = { mode: 'overnight', start: ovStart, stoppedAfter: el, stoppedTrials: trials };
-    $('#ov-state').textContent = 'saving best model…';
-    ensureWorker().postMessage({ cmd: 'fit', mode: 'overnight', examples: trainSet, top, trials });
-  } else {
-    searching = { mode: 'overnight' };
-    finishSearch(`<b>Overnight training stopped</b> after ${ovFmt(el)}, before any model had been scored.`);
+  trainDirty = false;
+  if ($('#keep-searching').checked) { $('#keep-searching').checked = false; ls.set('keepSearching', '0'); }
+  const label = mode === 'overnight' ? 'Overnight training' : 'Training';
+  if (models?.length && top?.length) {
+    // A checkpoint already fitted these, so there is nothing left to compute.
+    searching = { mode, stoppedAfter: el };
+    adoptModels(models, top);
+    finishSearch(`<b>${label} stopped</b> after ${ovFmt(el)} and ${trials} configuration${trials === 1 ? '' : 's'}. Kept the best ${models.length}, cross-validated accuracy <b>${(model.acc * 100).toFixed(1)}%</b>. Saved in this browser.`);
+    return;
   }
-};
-addEventListener('beforeunload', e => { if (searching?.mode === 'overnight') { e.preventDefault(); e.returnValue = ''; } });
+  if (top?.length) {
+    // Nothing fitted yet: fit the single best configuration, which takes a second or two.
+    searching = { mode, start: Date.now(), stoppedAfter: el, stoppedTrials: trials };
+    $('#ov-state').textContent = 'saving best model…';
+    $('#train-result').innerHTML = `<b>Stopping…</b> fitting the best configuration found, then saving.`;
+    ensureWorker().postMessage({ cmd: 'fit', mode, examples: trainSet, top: top.slice(0, 1), trials });
+    return;
+  }
+  searching = { mode, stoppedAfter: el };
+  finishSearch(`<b>${label} stopped</b> after ${ovFmt(el)}, before any model had been scored.`);
+}
+$('#overnight-stop').onclick = stopTraining;
+$('#train-stop').onclick = stopTraining;
+addEventListener('beforeunload', e => { if (searching?.mode === 'overnight' && !searching.stoppedAfter) { e.preventDefault(); e.returnValue = ''; } });
 
 function recordWindows(room, ts) {
   if (!rec) return;
@@ -1082,6 +1103,8 @@ $('#train-btn').onclick = () => startSearch('train', BUDGET.train);
 $('#train-more').onclick = () => startSearch('harder', BUDGET.harder);
 // "Keep searching" runs more short searches whenever nothing else is training. It never
 // competes with an overnight run, and it never touches the page thread.
+$('#keep-searching').checked = ls.get('keepSearching') === '1';
+$('#keep-searching').onchange = e => ls.set('keepSearching', e.target.checked ? '1' : '0');
 setInterval(() => { if ($('#keep-searching')?.checked && !searching && trainSet.length) startSearch('idle', BUDGET.idle); }, 5000);
 
 function renderTrainCounts() {
